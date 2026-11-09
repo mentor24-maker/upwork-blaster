@@ -7,6 +7,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "verify": "node --test"
+    "verify": "node --test",
+    "clickup": "node loop/scripts/with_doppler.mjs node loop/scripts/clickup.mjs",
+    "doctor": "node loop/scripts/doctor.mjs",
+    "test:loop": "node --test \"loop/**/*.test.js\" \"loop/**/*.test.mjs\""
   }
 }
