@@ -24,6 +24,13 @@ if [ ! -f "$REPO/.next/BUILD_ID" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$head_
   echo "$head_now" > "$STAMP"
 fi
 
+# Bring the database up to date before serving (lib/db.ts). A migration that
+# fails stops the start, so the app never runs against a half-made database.
+if ! node --disable-warning=ExperimentalWarning "$REPO/scripts/db.ts" migrate; then
+  say "DATABASE MIGRATION FAILED — not starting; launchd tries again shortly"
+  exit 1
+fi
+
 say "starting on port $PORT"
 # The app's password and cookie key (APP_PASSWORD, APP_SESSION_SECRET) live in
 # Doppler; `doppler run` hands them to the app without them touching a file or

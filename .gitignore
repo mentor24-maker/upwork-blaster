@@ -7,3 +7,12 @@ node_modules/
 .next/
 next-env.d.ts
 *.tsbuildinfo
+
+# The app's database and its copies live outside the repository
+# (~/upwork-blaster-data, lib/db.ts). These lines are the second lock, in case
+# one is ever made here by mistake.
+/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
