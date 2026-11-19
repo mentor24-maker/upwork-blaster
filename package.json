@@ -9,7 +9,7 @@
   "scripts": {
     "verify": "npm run typecheck && node --test",
     "typecheck": "next typegen && tsc --noEmit",
-    "dev": "next dev -p 4281",
+    "dev": "npm run db:migrate && next dev -p 4281",
     "build": "next build",
     "start": "next start -p 4280",
     "db:migrate": "node --disable-warning=ExperimentalWarning scripts/db.ts migrate",

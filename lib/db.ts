@@ -71,7 +71,8 @@ export function openDatabase(path: string = databasePath()): DatabaseSync {
 
 /** The migration files, in the order they run. */
 export function migrationFiles(dir: string = MIGRATIONS_DIR): string[] {
-  const names = readdirSync(dir).filter((n) => n.endsWith('.sql')).sort();
+  // The hint keeps Next.js from packing the whole project because of this read.
+  const names = readdirSync(/*turbopackIgnore: true*/ dir).filter((n) => n.endsWith('.sql')).sort();
   for (const n of names) {
     if (!/^\d{3}_[a-z0-9_]+\.sql$/.test(n)) throw new Error(`migration ${n} is not named like 001_some_name.sql`);
   }
@@ -93,7 +94,7 @@ export function runMigrations(db: DatabaseSync, dir: string = MIGRATIONS_DIR): s
   const ran: string[] = [];
   for (const name of migrationFiles(dir)) {
     if (done.has(name)) continue;
-    const sql = readFileSync(join(dir, name), 'utf8');
+    const sql = readFileSync(/*turbopackIgnore: true*/ join(dir, name), 'utf8');
     db.exec('BEGIN IMMEDIATE');
     try {
       db.exec(sql);
