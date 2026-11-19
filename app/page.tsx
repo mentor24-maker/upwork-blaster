@@ -9,6 +9,9 @@ export default function HomePage() {
         <li>
           <a href="/jobs/new">Add a job</a>
         </li>
+        <li>
+          <a href="/preferences">Preferences</a>
+        </li>
       </ul>
     </main>
   );
