@@ -12,6 +12,8 @@
     "dev": "next dev -p 4281",
     "build": "next build",
     "start": "next start -p 4280",
+    "db:migrate": "node --disable-warning=ExperimentalWarning scripts/db.ts migrate",
+    "db:backup": "bash scripts/run_db_backup.sh",
     "clickup": "node loop/scripts/with_doppler.mjs node loop/scripts/clickup.mjs",
     "doctor": "node loop/scripts/doctor.mjs",
     "test:loop": "node --test \"loop/**/*.test.js\" \"loop/**/*.test.mjs\""

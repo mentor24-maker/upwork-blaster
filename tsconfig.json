@@ -33,6 +33,7 @@
     "next-env.d.ts",
     "next.config.ts",
     "lib/**/*.ts",
+    "scripts/**/*.ts",
     "proxy.ts",
     "app/**/*.ts",
     "app/**/*.tsx",
