@@ -1,8 +1,9 @@
 # Upwork Blaster — Development Plan (first pass)
 
-Status: **draft for Dane's approval, revised November 9, 2026** to a
-trimmed first version (C12, C13). Nothing here is filed as tickets yet.
-Once the plan is approved, the tasks below are filed as a separate step.
+Status: **approved.** Revised November 9, 2026 to a trimmed first version
+(C12, C13); every Section 3 decision agreed November 18, 2026, when the
+first version's tasks and R1 were filed as tickets in Upwork Blaster's
+queue.
 
 Source: the hand-off doc attached to UB-2 ("Upwork Blaster — Claude Code
 Implementation Handoff", v1.0, November 8, 2026). Section numbers below
@@ -63,7 +64,7 @@ versions, bid suggestions, export) wait until Dane has used it.
 | C1 | §1, §16 ("inspect AGENTS.md", "existing Spirality/Starcaster stack") | Treat this as a **new, standalone repository**. There is no `AGENTS.md` here (the instructions are `CLAUDE.md`), no app code, no database and no Next.js: today the repository is Node 22, a placeholder test and Spirality's loop files. Reuse the *conventions* of Dane's other apps (see D1), not their code, except where a piece can be copied whole (C12). | The hand-off was written without seeing this repository. Building inside Starcaster or sharing its database would tangle two products. |
 | C2 | §16 ("begin Phase 1 while investigating Phase 0") | Split Phase 0 into **small separate tickets**: one research ticket for the Upwork terms and capability check, and the app skeleton as its own tickets. Never one ticket that "inspects and begins building". | The loop builds one ticket into one pull request. A ticket that mixes research and building can't be reviewed cleanly. |
 | C3 | §12 Phase 1 (one "complete manual/demo vertical slice") | Break Phase 1 into **three epics** (bare app, job inbox and ranking, proposal workspace), each usable on its own. | Phase 1 as written is weeks of work in one block. Smaller epics let Dane use, and correct, the inbox before drafting is built on top of it. |
-| C4 | §8 (12 tables up front) | **Grow the data model one task at a time**: each task adds only the tables it uses. Start with Opportunity, Evaluation, Decision, PortfolioEvidence, Preferences and ProposalVersion. ProviderConnection, SearchRun, Approval and SubmissionAttempt arrive with the epics that need them. | Tables designed before the screens that use them get redesigned. Migrations are cheap; guessing is not. |
+| C4 | §8 (12 tables up front) | **Grow the data model one task at a time**: each task adds only the tables it uses. Start with Opportunity, Preferences and PortfolioEvidence (1.3). Evaluation and Decision arrive with 2.5 and 2.6, the approval fingerprint with 3.3, ProposalVersion with 4.3, and ProviderConnection, SearchRun and SubmissionAttempt with the epics that need them. | Tables designed before the screens that use them get redesigned. Migrations are cheap; guessing is not. |
 | C5 | §9 (full approval state machine, operation keys, submission lock, reconciliation) | Build the **manual-submission version first**: Draft → Ready → Approved (bound to a fingerprint of the exact text) → "Dane says he sent it". Defer locks, operation keys, `OUTCOME_UNKNOWN` and reconciliation to Epic 6, and build them only if Upwork really lets an outside app submit. | All of that machinery exists to stop duplicate automatic sends. With manual submission there is nothing to send twice. §12 Phase 3 already says manual submission may be the permanent path. |
 | C6 | §7, §3.8 (OpenClaw) | **Leave OpenClaw out** of the plan, with no task for it. Revisit only if a later need appears. | The hand-off itself calls it optional. It adds an integration and a security boundary with no feature that needs it. |
 | C7 | §7 ("durable background-job mechanism") | **No background-job system** in the first epics. Ranking and drafting run when Dane presses a button and he waits a few seconds. | The MVP has no unattended work (§3.7), so a job queue would be infrastructure with no user. |
@@ -80,8 +81,8 @@ versions, bid suggestions, export) wait until Dane has used it.
   authenticated instance" but not where it is hosted or how sign-in works.
   See D2 and D3.
 - **The cost of the AI calls.** Ranking and drafting each call an AI model.
-  The plan adds a simple per-session count of AI calls and their rough cost,
-  shown in the app, so there are no surprises.
+  Task 2.4 records each AI call's cost and shows a running total in the
+  app, so there are no surprises.
 - **Getting jobs in with no Upwork access.** "Manual opportunity input"
   (§12) is the whole product until Epic 5, so it needs to be easy: paste a
   job post's text and link, and the app pulls out the fields. Fields it
@@ -111,10 +112,12 @@ versions, bid suggestions, export) wait until Dane has used it.
 
 ## 3. Decisions Dane needs to make
 
-Each has a recommended answer. Reply with "agreed" or the answer you want.
-D2 and the standalone choice (C12) were agreed on November 9, 2026; D3 and
-D4 changed with the trim (C13), because a one-person app on the Mini needs
-less than a hosted one.
+Each had a recommended answer, and Dane agreed to all seven on November 18,
+2026 (D2 and the standalone choice, C12, on November 9). D3 and D4 changed
+with the trim (C13), because a one-person app on the Mini needs less than a
+hosted one. D5 leaves one check with Dane: that the Anthropic account's
+data-retention settings suit client job text, before real job posts go
+through 2.4.
 
 | # | Question | Recommendation | Why |
 |---|---|---|---|
@@ -185,7 +188,7 @@ These are estimates, not measurements.
 
 | # | Task | Goal | Risk | Waits on |
 |---|---|---|---|---|
-| 1.1 | Dane can open an empty Upwork Blaster page on the Mini, and it stays running | Next.js + TypeScript skeleton, a home page, `verify` runs typecheck and tests; a launchd service keeps it running on the Mini at a fixed home-network address and restarts it after a crash or reboot | low | D1 decided |
+| 1.1 | Dane can open an empty Upwork Blaster page on the Mini, and it stays running | Next.js + TypeScript skeleton, a home page, `verify` runs typecheck and tests; a launchd service keeps it running on the Mini at a fixed home-network address and restarts it after a crash or reboot | low | nothing |
 | 1.2 | Only Dane can get into the app | One password from Doppler, a signed session cookie, a check on every page and server action; a test that a signed-out visitor sees nothing and a wrong password gets nothing | low | 1.1 |
 | 1.3 | The app keeps Dane's data in its own database file, with a daily copy | SQLite through `node:sqlite`, a migration runner, the first migration (Opportunity, Preferences, PortfolioEvidence); a daily copy of the file kept beside it; the database file is never in the repository | medium | 1.1 |
 
@@ -196,7 +199,7 @@ These are estimates, not measurements.
 | 2.1 | Dane can paste a job post he found on Upwork and save it | Manual job form: link, title, text, budget and the like; duplicates by link are refused | low | 1.2, 1.3 |
 | 2.2 | Dane can record his search preferences and hard exclusions | Preferences page: themes, required and unsupported tech, exclusions, ranking weights (versioned, C10) | low | 1.2, 1.3 |
 | 2.3 | Dane can enter the portfolio evidence proposals are allowed to use | PortfolioEvidence page: project, status (delivered, in progress, planned), features, links, "approved for use" | low | 1.2, 1.3 |
-| 2.4 | A pasted job's fields are filled in for Dane, with gaps marked unknown | The AI adapter copied from StarCaster (D5), key in Doppler, each call's cost recorded; structured extraction; job text treated as untrusted | medium | 2.1, D5 decided |
+| 2.4 | A pasted job's fields are filled in for Dane, with gaps marked unknown | The AI adapter copied from StarCaster (D5), key in Doppler, each call's cost recorded and a running total shown in the app; structured extraction; job text treated as untrusted | medium | 2.1 |
 | 2.5 | Each job gets a fit score Dane can read the reasons for | Rule-based scoring on the five §6 dimensions with evidence, confidence, unknowns at a neutral value; exclusions kept separate (§13.2 test) | medium | 2.2, 2.3, 2.4 |
 | 2.6 | Dane sees his jobs as ranked cards and can Pursue, Pass or Revisit each one | Inbox with the §5B card fields, top five first, "unknown" shown honestly; Decision table and buttons; passing never rewrites his preferences | low | 2.5 |
 | 2.7 | A job post that tries to give the AI orders changes nothing | Prompt-injection fixtures (§13.4): a hostile post cannot change scores, decisions or what the app does | medium | 2.4, 2.5 |
