@@ -26,11 +26,14 @@
       "@/*": [
         "./*"
       ]
-    }
+    },
+    "allowImportingTsExtensions": true
   },
   "include": [
     "next-env.d.ts",
     "next.config.ts",
+    "lib/**/*.ts",
+    "proxy.ts",
     "app/**/*.ts",
     "app/**/*.tsx",
     ".next/types/**/*.ts",

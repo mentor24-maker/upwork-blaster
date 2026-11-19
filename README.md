@@ -24,3 +24,17 @@ merged work live. Its log is `~/loop-logs/upwork-blaster-app.log`.
 
 To work on it: `npm run dev` (live reload, on port 4281 so it never collides with the service), and
 `npm run verify` for the type check and every test.
+
+## Signing in
+
+Every page asks for one password first. It and the key that signs the
+sign-in cookie live in Doppler (project `upwork-blaster`, config `dev`),
+never in this repository:
+
+- `APP_PASSWORD`: what you type on the sign-in page.
+- `APP_SESSION_SECRET`: a long random key. Changing it signs every browser out.
+
+The service reads both through `doppler run` when it starts, so after
+changing either one, restart it with the `kickstart` line above. If either is
+missing the app still starts but lets nobody in. For `npm run dev`, run it as
+`doppler run --project upwork-blaster --config dev -- npm run dev`.
