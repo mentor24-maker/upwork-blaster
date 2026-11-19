@@ -2,7 +2,14 @@ export default function HomePage() {
   return (
     <main>
       <h1>Upwork Blaster</h1>
-      <p>The app is running. Job screens arrive in later tasks.</p>
+      <ul>
+        <li>
+          <a href="/jobs">Saved jobs</a>
+        </li>
+        <li>
+          <a href="/jobs/new">Add a job</a>
+        </li>
+      </ul>
     </main>
   );
 }

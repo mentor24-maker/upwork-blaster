@@ -57,7 +57,7 @@ test('the migrations build the three first tables on an empty database, and they
   const dir = scratch();
   try {
     const db = openDatabase(join(dir, 'app.sqlite'));
-    assert.deepEqual(runMigrations(db), ['001_first_tables.sql']);
+    assert.deepEqual(runMigrations(db), ['001_first_tables.sql', '002_opportunity_job_type_connects.sql']);
 
     db.prepare('INSERT INTO opportunity (url, title, description, budget) VALUES (?, ?, ?, ?)').run(
       'https://www.upwork.com/jobs/~test', 'A made-up job', 'Made-up text for the test.', null,
