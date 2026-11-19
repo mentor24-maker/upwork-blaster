@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Upwork Blaster app, kept running on the Mini. Filled in and installed by
+  scripts/install_app_service.sh; never edit the copy in ~/Library/LaunchAgents.
+  RunAtLoad starts it at login and after a reboot; KeepAlive starts it again
+  whenever it stops; ThrottleInterval keeps a broken build from restarting in
+  a tight loop.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@@LABEL@@</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>@@REPO@@/scripts/run_app.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>@@REPO@@</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>@@PATH@@</string>
+        <key>APP_PORT</key>
+        <string>@@PORT@@</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>@@LOG@@</string>
+    <key>StandardErrorPath</key>
+    <string>@@LOG@@</string>
+</dict>
+</plist>
