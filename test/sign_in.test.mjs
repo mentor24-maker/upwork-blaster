@@ -12,6 +12,7 @@ import {
   SESSION_COOKIE,
   SESSION_MAX_AGE_SECONDS,
 } from '../lib/session.ts';
+import { signInMessage } from '../lib/sign_in_messages.ts';
 import { POST as signIn } from '../app/api/sign-in/route.ts';
 import { POST as signOut } from '../app/api/sign-out/route.ts';
 
@@ -21,6 +22,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PASSWORD = 'test-only-password';
 const SECRET = 'test-only-session-secret';
 const ENV = { APP_PASSWORD: PASSWORD, APP_SESSION_SECRET: SECRET };
+const CONFIG = { password: PASSWORD, secret: SECRET };
 
 const req = (path, { method = 'GET', headers = {}, body } = {}) =>
   new Request(`http://mac-mini.local:4280${path}`, { method, headers, body });
@@ -86,16 +88,33 @@ test('a signed-out visitor may open the sign-in page and send its form', () => {
 test('a forged, foreign or expired cookie counts as signed out', () => {
   const now = Date.now();
   const forged = `${now}.${'A'.repeat(43)}`;
-  const foreign = createSessionToken('some-other-secret', now);
-  const expired = createSessionToken(SECRET, now - SESSION_MAX_AGE_SECONDS * 1000 - 1);
-  const future = createSessionToken(SECRET, now + 60_000);
+  const foreign = createSessionToken({ password: PASSWORD, secret: 'some-other-secret' }, now);
+  const expired = createSessionToken(CONFIG, now - SESSION_MAX_AGE_SECONDS * 1000 - 1);
+  const future = createSessionToken(CONFIG, now + 60_000);
   for (const token of [forged, foreign, expired, future, '', 'garbage', `${now}`]) {
     assert.equal(gate(req('/', { headers: withCookie(token) }), ENV, now)?.status, 307, token);
   }
 });
 
+test('changing the password signs every browser out', () => {
+  const now = Date.now();
+  const before = createSessionToken(CONFIG, now);
+  assert.equal(gate(req('/', { headers: withCookie(before) }), ENV, now), undefined, 'in, under the old password');
+  const changed = { ...ENV, APP_PASSWORD: 'test-only-new-password' };
+  assert.equal(gate(req('/', { headers: withCookie(before) }), changed, now)?.status, 307, 'out, once it changes');
+  assert.equal(isValidSessionToken(before, { password: 'test-only-new-password', secret: SECRET }, now), false);
+  const after = createSessionToken({ password: 'test-only-new-password', secret: SECRET }, now);
+  assert.equal(gate(req('/', { headers: withCookie(after) }), changed, now), undefined, 'a new sign-in works');
+});
+
+test('changing the cookie key signs every browser out too', () => {
+  const now = Date.now();
+  const before = createSessionToken(CONFIG, now);
+  assert.equal(gate(req('/', { headers: withCookie(before) }), { ...ENV, APP_SESSION_SECRET: 'test-only-new-secret' }, now)?.status, 307);
+});
+
 test('with the password or the cookie key missing from Doppler, nobody is let in', () => {
-  const good = createSessionToken(SECRET);
+  const good = createSessionToken(CONFIG);
   for (const env of [{}, { APP_PASSWORD: PASSWORD }, { APP_SESSION_SECRET: SECRET }]) {
     assert.equal(readAuthConfig(env), null);
     assert.equal(gate(req('/', { headers: withCookie(good) }), env)?.status, 307);
@@ -133,7 +152,7 @@ test('the right password gets in: a signed cookie, then the home page opens', as
   assert.ok(!cookie.includes(PASSWORD) && !cookie.includes(SECRET), 'the cookie carries neither secret');
 
   const token = cookie.split(';')[0].slice(SESSION_COOKIE.length + 1);
-  assert.ok(isValidSessionToken(token, SECRET));
+  assert.ok(isValidSessionToken(token, CONFIG));
   assert.equal(gate(req('/', { headers: withCookie(token) }), ENV), undefined, 'home page opens');
   assert.equal(
     gate(req('/', { method: 'POST', headers: withCookie(token, { 'next-action': 'abc123' }) }), ENV),
@@ -151,6 +170,15 @@ test('with no password set up, the sign-in form says so and lets nobody in', asy
   assert.equal(res.headers.get('set-cookie'), null);
 });
 
+test('the sign-in page shows only its own messages, whatever the address says', () => {
+  assert.equal(signInMessage('wrong', true), 'That password is not right. Try again.');
+  assert.match(signInMessage('not-set-up', true), /not set up/);
+  assert.match(signInMessage(undefined, false), /not set up/, 'no keys: it says so whatever the address');
+  for (const error of [undefined, '', 'nope', '__proto__', 'constructor', 'toString', 'hasOwnProperty', ['wrong', 'wrong']]) {
+    assert.equal(signInMessage(error, true), undefined, String(error));
+  }
+});
+
 test('signing out clears the cookie and goes back to the sign-in page', async () => {
   const res = await signOut();
   assert.equal(res.status, 303);
@@ -162,14 +190,23 @@ test('signing out clears the cookie and goes back to the sign-in page', async ()
 
 test('the gate runs on every path but the built page assets', async () => {
   const { config, proxy } = await import('../proxy.ts');
-  assert.deepEqual(config.matcher, ['/((?!_next/static|_next/image|favicon.ico).*)']);
+  assert.deepEqual(config.matcher, ['/((?!_next/static/|_next/image$|_next/image/|favicon\\.ico$).*)']);
+  // The same exclusions, as Next.js reads them against a path.
+  const pattern = new RegExp(`^${config.matcher[0]}$`);
+  const meetsGate = (path) => pattern.test(path);
+  for (const path of ['/', '/favicon.icoX', '/favicon.ico/x', '/_next/staticX', '/_next/imageX', '/sign-in']) {
+    assert.ok(meetsGate(path), `${path} meets the gate`);
+  }
+  for (const path of ['/favicon.ico', '/_next/static/chunks/a.js', '/_next/image']) {
+    assert.ok(!meetsGate(path), `${path} skips the gate (no data there)`);
+  }
   assert.equal(proxy(req('/'))?.status, 307, 'proxy.ts calls the gate');
 });
 
 test('the app service reads its secrets from Doppler, and nothing prints them', () => {
   const runApp = readFileSync(join(repo, 'scripts/run_app.sh'), 'utf8');
   assert.match(runApp, /exec doppler run --project "\$DOPPLER_PROJECT" --config "\$DOPPLER_CONFIG"/);
-  for (const file of ['lib/session.ts', 'lib/gate.ts', 'proxy.ts', 'app/api/sign-in/route.ts', 'app/sign-in/page.tsx', 'app/layout.tsx']) {
+  for (const file of ['lib/session.ts', 'lib/gate.ts', 'proxy.ts', 'app/api/sign-in/route.ts', 'app/sign-in/page.tsx', 'app/layout.tsx', 'lib/sign_in_messages.ts']) {
     const src = readFileSync(join(repo, file), 'utf8');
     assert.doesNotMatch(src, /console\.|process\.stdout|process\.stderr/, `${file} writes nothing to a log`);
   }

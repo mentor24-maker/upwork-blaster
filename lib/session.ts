@@ -7,8 +7,11 @@
  * run time and are never written to a log, a page or the repository:
  *
  *   APP_PASSWORD        what Dane types on the sign-in page
- *   APP_SESSION_SECRET  the key that signs the cookie; changing it signs
- *                       every browser out
+ *   APP_SESSION_SECRET  the key that signs the cookie
+ *
+ * Changing either one signs every browser out: the cookie's signature covers
+ * a hash of the password as well as the key, so a cookie made under an old
+ * password stops working the moment the password changes.
  *
  * When either one is missing, nobody can sign in and nobody is signed in:
  * the lock fails shut, never open.
@@ -41,31 +44,46 @@ export function passwordMatches(given: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
-function sign(issuedAt: string, secret: string): string {
-  return createHmac('sha256', secret).update(`ub-session.${issuedAt}`).digest('base64url');
+function sign(issuedAt: string, config: AuthConfig): string {
+  // The password goes in as a hash, never as itself, and the whole input is
+  // keyed by the secret, so the cookie reveals neither.
+  const passwordHash = createHash('sha256').update(config.password, 'utf8').digest('base64url');
+  return createHmac('sha256', config.secret).update(`ub-session.${passwordHash}.${issuedAt}`).digest('base64url');
 }
 
 /** A cookie value proving a sign-in at `now`: "<issued-at ms>.<signature>". */
-export function createSessionToken(secret: string, now: number = Date.now()): string {
+export function createSessionToken(config: AuthConfig, now: number = Date.now()): string {
   const issuedAt = String(Math.floor(now));
-  return `${issuedAt}.${sign(issuedAt, secret)}`;
+  return `${issuedAt}.${sign(issuedAt, config)}`;
 }
 
-/** Whether a cookie value was signed with `secret` and has not run out. */
+/** Whether a cookie value was signed under this password and key and has not run out. */
 export function isValidSessionToken(
   token: string | undefined | null,
-  secret: string,
+  config: AuthConfig | null,
   now: number = Date.now(),
 ): boolean {
-  if (!token || !secret) return false;
+  if (!token || !config || !config.password || !config.secret) return false;
   const match = /^(\d{1,16})\.([A-Za-z0-9_-]{43})$/.exec(token);
   if (!match) return false;
   const [, issuedAt, signature] = match;
-  const expected = Buffer.from(sign(issuedAt, secret));
+  const expected = Buffer.from(sign(issuedAt, config));
   const actual = Buffer.from(signature);
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return false;
   const age = now - Number(issuedAt);
   return age >= 0 && age < SESSION_MAX_AGE_SECONDS * 1000;
+}
+
+/**
+ * Whether a sign-in cookie's value is good under the keys in `env`. The one
+ * check every caller uses: the gate (through isSignedIn) and the layout.
+ */
+export function isSignedInToken(
+  token: string | undefined | null,
+  env: Env = process.env,
+  now: number = Date.now(),
+): boolean {
+  return isValidSessionToken(token, readAuthConfig(env), now);
 }
 
 /** One cookie's value out of a `Cookie:` request header. */
@@ -81,9 +99,7 @@ export function readCookie(header: string | null | undefined, name: string): str
 
 /** Whether this request carries a valid sign-in cookie. */
 export function isSignedIn(request: Request, env: Env = process.env, now: number = Date.now()): boolean {
-  const config = readAuthConfig(env);
-  if (!config) return false;
-  return isValidSessionToken(readCookie(request.headers.get('cookie'), SESSION_COOKIE), config.secret, now);
+  return isSignedInToken(readCookie(request.headers.get('cookie'), SESSION_COOKIE), env, now);
 }
 
 /**

@@ -1,13 +1,9 @@
 import { readAuthConfig } from '../../lib/session.ts';
+import { signInMessage } from '../../lib/sign_in_messages.ts';
 
-const MESSAGES: Record<string, string> = {
-  wrong: 'That password is not right. Try again.',
-  'not-set-up': "The app's password is not set up yet, so nobody can sign in.",
-};
-
-export default async function SignInPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+export default async function SignInPage({ searchParams }: { searchParams: Promise<{ error?: string | string[] }> }) {
   const { error } = await searchParams;
-  const message = readAuthConfig() ? MESSAGES[error ?? ''] : MESSAGES['not-set-up'];
+  const message = signInMessage(error, readAuthConfig() !== null);
   return (
     <main>
       <h1>Upwork Blaster</h1>

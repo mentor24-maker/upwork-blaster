@@ -8,6 +8,8 @@ export function proxy(request: Request): Response | undefined {
 
 export const config = {
   // Every path but the built scripts, styles and images the sign-in page
-  // itself needs. They hold no data.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // itself needs. They hold no data. Each exclusion is a whole path segment
+  // (or the whole favicon path), so /favicon.icoX or /_next/staticX still
+  // meet the gate.
+  matcher: ['/((?!_next/static/|_next/image$|_next/image/|favicon\\.ico$).*)'],
 };

@@ -17,6 +17,6 @@ export async function POST(request: Request): Promise<Response> {
   if (!passwordMatches(given, config.password)) return redirect('/sign-in?error=wrong', 303);
 
   const response = redirect('/', 303);
-  response.headers.set('Set-Cookie', sessionCookieHeader(createSessionToken(config.secret)));
+  response.headers.set('Set-Cookie', sessionCookieHeader(createSessionToken(config)));
   return response;
 }

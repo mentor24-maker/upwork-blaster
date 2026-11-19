@@ -32,7 +32,10 @@ sign-in cookie live in Doppler (project `upwork-blaster`, config `dev`),
 never in this repository:
 
 - `APP_PASSWORD`: what you type on the sign-in page.
-- `APP_SESSION_SECRET`: a long random key. Changing it signs every browser out.
+- `APP_SESSION_SECRET`: a long random key.
+
+Changing either one signs every browser out (after the restart below), so
+if you think the password has leaked, changing it is enough.
 
 The service reads both through `doppler run` when it starts, so after
 changing either one, restart it with the `kickstart` line above. If either is
