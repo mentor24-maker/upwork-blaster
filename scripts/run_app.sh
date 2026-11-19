@@ -25,4 +25,10 @@ if [ ! -f "$REPO/.next/BUILD_ID" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$head_
 fi
 
 say "starting on port $PORT"
-exec node "$REPO/node_modules/next/dist/bin/next" start -H 0.0.0.0 -p "$PORT"
+# The app's password and cookie key (APP_PASSWORD, APP_SESSION_SECRET) live in
+# Doppler; `doppler run` hands them to the app without them touching a file or
+# this log. Without them the app still starts, and lets nobody in.
+DOPPLER_PROJECT="$(node "$REPO/scripts/project_config.mjs" dopplerProject)"
+DOPPLER_CONFIG="$(node "$REPO/scripts/project_config.mjs" dopplerConfig)"
+exec doppler run --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --no-check-version -- \
+  node "$REPO/node_modules/next/dist/bin/next" start -H 0.0.0.0 -p "$PORT"
