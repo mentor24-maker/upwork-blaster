@@ -17,7 +17,10 @@ export default async function NewJobPage({
         <a href="/jobs">← Saved jobs</a>
       </p>
       <h1>New job</h1>
-      <p>Paste a job post you found on Upwork. Leave a field blank when the post does not say: it is kept as unknown.</p>
+      <p>
+        Paste a job post you found on Upwork. Leave any other field blank: when you save, the AI reads it out of the
+        post’s text, and a field the post does not state is kept as unknown. What you type yourself is never replaced.
+      </p>
       {message ? (
         <p role="alert" style={{ color: '#a40000' }}>
           {message}
