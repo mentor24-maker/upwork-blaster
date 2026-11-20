@@ -12,6 +12,9 @@ export default function HomePage() {
         <li>
           <a href="/preferences">Preferences</a>
         </li>
+        <li>
+          <a href="/portfolio">Portfolio</a>
+        </li>
       </ul>
     </main>
   );
