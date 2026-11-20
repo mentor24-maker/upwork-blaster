@@ -4,6 +4,7 @@
 import { appDatabase } from '../../../lib/app_db.ts';
 import { redirect } from '../../../lib/gate.ts';
 import { readJobForm, saveJob } from '../../../lib/jobs.ts';
+import { fillJobFromPost } from '../../../lib/extractJob.ts';
 
 export async function POST(request: Request): Promise<Response> {
   let form: FormData;
@@ -15,7 +16,11 @@ export async function POST(request: Request): Promise<Response> {
   const read = readJobForm(form);
   if (!read.ok) return redirect(`/jobs/new?error=${read.error}`, 303);
 
-  const saved = saveJob(appDatabase(), read.job);
+  const db = appDatabase();
+  const saved = saveJob(db, read.job);
   if (!saved.ok) return redirect(`/jobs/new?error=duplicate&existing=${saved.existingId}`, 303);
+  // The AI fills in the fields he left blank (task 2.4). The job is already
+  // saved: if the AI cannot read it, the job page says why and nothing is lost.
+  await fillJobFromPost(db, saved.id);
   return redirect(`/jobs?saved=${saved.id}`, 303);
 }
