@@ -37,6 +37,15 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 {show(j.connectsCost)}
               </div>
               <div>Client: {show(j.client)}</div>
+              {j.extractionProblem ? (
+                <div style={{ color: '#a40000' }}>
+                  The AI could not read this post ({j.extractionProblem}). Blank fields stay unknown.
+                </div>
+              ) : j.extractedAt ? (
+                <div style={{ color: '#666', fontSize: '0.9em' }}>
+                  Fields read from the post by the AI; “unknown” means the post did not say.
+                </div>
+              ) : null}
               <div style={{ color: '#666', fontSize: '0.9em' }}>Saved {savedAt(j.createdAt)} Mountain time</div>
             </li>
           ))}

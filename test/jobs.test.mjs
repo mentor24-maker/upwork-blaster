@@ -7,6 +7,11 @@ import { openDatabase, runMigrations } from '../lib/db.ts';
 import { jobFormMessage, listJobs, normaliseJobUrl, readJobForm, saveJob } from '../lib/jobs.ts';
 import { gate } from '../lib/gate.ts';
 import { POST as postJob } from '../app/api/jobs/route.ts';
+import { useAiDepsForTests } from '../lib/extractJob.ts';
+
+// Saving a job now asks the AI to read it (task 2.4). These tests are about
+// the form, so the AI is switched off: no key, and nothing is ever sent.
+useAiDepsForTests({ getKey: () => '', fetchImpl: async () => { throw new Error('no test calls the real API'); } });
 
 // Made-up job posts for the tests only: no real client's text goes here.
 const fields = (over = {}) => ({
