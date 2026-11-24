@@ -169,6 +169,12 @@ export function saveJob(
   }
 }
 
+/** One saved job by its id. */
+export function getJob(db: DatabaseSync, id: number): SavedJob | undefined {
+  const row = db.prepare(`${SELECT} WHERE id = ?`).get(id);
+  return row ? toJob(row) : undefined;
+}
+
 /** Every saved job, newest first. */
 export function listJobs(db: DatabaseSync): SavedJob[] {
   return db.prepare(`${SELECT} ORDER BY created_at DESC, id DESC`).all().map(toJob);

@@ -5,6 +5,7 @@ import { appDatabase } from '../../../lib/app_db.ts';
 import { redirect } from '../../../lib/gate.ts';
 import { readJobForm, saveJob } from '../../../lib/jobs.ts';
 import { fillJobFromPost } from '../../../lib/extractJob.ts';
+import { scoreJob } from '../../../lib/score.ts';
 
 export async function POST(request: Request): Promise<Response> {
   let form: FormData;
@@ -22,5 +23,8 @@ export async function POST(request: Request): Promise<Response> {
   // The AI fills in the fields he left blank (task 2.4). The job is already
   // saved: if the AI cannot read it, the job page says why and nothing is lost.
   await fillJobFromPost(db, saved.id);
+  // Then it is scored with the preferences in force (task 2.5), after the AI
+  // so the score sees the fields it filled in.
+  scoreJob(db, saved.id);
   return redirect(`/jobs?saved=${saved.id}`, 303);
 }
