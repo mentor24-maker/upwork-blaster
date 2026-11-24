@@ -12,6 +12,9 @@ export default function HomePage() {
       <h1>Upwork Blaster</h1>
       <ul>
         <li>
+          <a href="/inbox">Inbox</a>: your jobs ranked, top five first
+        </li>
+        <li>
           <a href="/jobs">Saved jobs</a>
         </li>
         <li>
