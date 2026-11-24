@@ -109,9 +109,10 @@ test('what Dane typed himself is never replaced', async () => {
 
 test('a number the post never mentions is a guess, and is thrown away', () => {
   const post = quotePost('Made-up title', 'A made-up job with no money or Connects stated.');
+  // "Hourly" is not said in the post either, so that is a guess too.
   assert.deepEqual(checkAnswer({ budget: '$500', job_type: 'hourly', connects_cost: 12 }, post), {
     budget: null,
-    jobType: 'hourly',
+    jobType: null,
     postedAt: null,
     client: null,
     connectsCost: null,
@@ -140,9 +141,11 @@ test('the job text reaches the model only as quoted data, never as instructions'
   assert.equal(quoted.match(/<\/job_post>/g).length, 1, 'the post cannot close the quote early');
   assert.equal(quoted.match(/<job_post>/g).length, 1, 'or open a new one');
 
-  // The only number it named ("1") is in the post, so the check lets it
-  // through; the deeper guard (task 2.7) is that a field is all it can touch.
+  // The "1" and the "hourly" are only in the post's order to the AI, and an
+  // order is not a fact the post states (task 2.7): both are thrown away.
   const [saved] = listJobs(db);
+  assert.equal(saved.connectsCost, null);
+  assert.equal(saved.jobType, null);
   assert.equal(saved.title, 'Build a made-up booking dashboard');
   assert.equal(saved.description, hostile, 'the post itself is unchanged');
   db.close();
