@@ -34,6 +34,8 @@ export type SavedJob = NewJob & {
   extractedAt: string | null;
   /** Why the AI could not read it, in plain words; null if nothing went wrong. */
   extractionProblem: string | null;
+  /** Why the job could not be scored (lib/score.ts), in plain words; null if nothing went wrong. */
+  scoringProblem: string | null;
 };
 
 /** Why a form could not be saved; each has a plain message (jobFormMessage). */
@@ -169,12 +171,18 @@ export function saveJob(
   }
 }
 
+/** One saved job by its id. */
+export function getJob(db: DatabaseSync, id: number): SavedJob | undefined {
+  const row = db.prepare(`${SELECT} WHERE id = ?`).get(id);
+  return row ? toJob(row) : undefined;
+}
+
 /** Every saved job, newest first. */
 export function listJobs(db: DatabaseSync): SavedJob[] {
   return db.prepare(`${SELECT} ORDER BY created_at DESC, id DESC`).all().map(toJob);
 }
 
-const SELECT = `SELECT id, url, title, description, budget, job_type, posted_at, client, connects_cost, created_at, extracted_at, extraction_problem FROM opportunity`;
+const SELECT = `SELECT id, url, title, description, budget, job_type, posted_at, client, connects_cost, created_at, extracted_at, extraction_problem, scoring_problem FROM opportunity`;
 
 function toJob(row: Record<string, unknown>): SavedJob {
   return {
@@ -190,5 +198,6 @@ function toJob(row: Record<string, unknown>): SavedJob {
     createdAt: String(row.created_at),
     extractedAt: (row.extracted_at as string | null) ?? null,
     extractionProblem: (row.extraction_problem as string | null) ?? null,
+    scoringProblem: (row.scoring_problem as string | null) ?? null,
   };
 }

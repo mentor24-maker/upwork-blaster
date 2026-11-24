@@ -46,6 +46,9 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                   Fields read from the post by the AI; “unknown” means the post did not say.
                 </div>
               ) : null}
+              {j.scoringProblem ? (
+                <div style={{ color: '#a40000' }}>This job is not scored: scoring it failed ({j.scoringProblem}).</div>
+              ) : null}
               <div style={{ color: '#666', fontSize: '0.9em' }}>Saved {savedAt(j.createdAt)} Mountain time</div>
             </li>
           ))}
