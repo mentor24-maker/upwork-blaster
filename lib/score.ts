@@ -129,10 +129,33 @@ const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 
 // ---------------------------------------------------------------- exclusions
 
-const AI_IN_RULE = /(?<![A-Za-z0-9])(AI|A\.I\.|artificial intelligence|ChatGPT|GPT|LLMs?)(?![A-Za-z0-9])/i;
+const AI_WORD = String.raw`(?<![A-Za-z0-9])(?:AI|A\.I\.|artificial intelligence|ChatGPT|GPT|LLMs?)(?![A-Za-z0-9])`;
+const AI_IN_RULE = new RegExp(AI_WORD, 'i');
+/** A rule about forbidding AI, as opposed to one that merely mentions it ("AI chatbot projects"). */
+const BAN_IN_RULE = /\b(forbid\w*|prohibit\w*|ban|bans|banned|banning|disallow\w*|not allowed|not permitted|refus\w*)\b/i;
+// The negation has to govern the AI word itself: "no AI", "do not use
+// ChatGPT", "without AI", "AI tools are not allowed", "AI-generated …
+// rejected". A "no" or "not" elsewhere in the sentence ("not a big team, but
+// we build AI products", "no prior experience needed with GPT") is not a ban.
+const AI_TOOLS = String.raw`(?:[- ](?:tools?|assistance|assistants?|generated|written|writing|content|use|usage|help))?`;
 const AI_BANS = [
-  /\b(no|not|never|without|don'?t|do not|forbid\w*|prohibit\w*|ban\w*)\b[^.\n]{0,40}(?<![A-Za-z0-9])(AI|A\.I\.|artificial intelligence|ChatGPT|GPT|LLMs?)(?![A-Za-z0-9])/i,
-  /(?<![A-Za-z0-9])(AI|ChatGPT|GPT)[- ](generated|written)\b[^.\n]{0,60}\b(reject\w*|not (be )?accepted|disqualif\w*|declin\w*|ignored)/i,
+  // "No AI tools", "without the use of AI", "zero AI"
+  new RegExp(String.raw`\b(?:no|without|zero)\s+(?:the\s+)?(?:(?:use|usage)\s+of\s+|using\s+)?(?:any\s+)?` + AI_WORD, 'i'),
+  // "Do not use ChatGPT", "please don't use any AI", "never submit AI"
+  new RegExp(
+    String.raw`\b(?:do not|don'?t|never|must not|mustn'?t|may not|cannot|can'?t|should not|shouldn'?t|not)\s+(?:to\s+)?(?:use|using|rely on|submit|employ)\s+(?:any\s+)?(?:the\s+)?` + AI_WORD,
+    'i',
+  ),
+  // "We forbid AI", "prohibits the use of ChatGPT"
+  new RegExp(String.raw`\b(?:forbid|forbids|prohibit|prohibits|ban|bans|disallow|disallows)\s+(?:the\s+)?(?:(?:use|usage)\s+of\s+)?(?:any\s+)?` + AI_WORD, 'i'),
+  // "AI tools are not allowed", "Use of AI is strictly prohibited"
+  new RegExp(
+    String.raw`(?:\b(?:use|usage)\s+of\s+(?:any\s+)?)?` + AI_WORD + AI_TOOLS +
+      String.raw`\s+(?:is|are|will be)\s+(?:strictly\s+)?(?:not allowed|not permitted|not accepted|prohibited|forbidden|banned|disallowed)\b`,
+    'i',
+  ),
+  // "AI-generated proposals will be rejected"
+  new RegExp(AI_WORD + String.raw`[- ](?:generated|written)\b[^.\n]{0,60}\b(?:reject\w*|not (?:be )?accepted|disqualif\w*|declin\w*|ignored)`, 'i'),
 ];
 
 /**
@@ -161,11 +184,13 @@ export function findExclusions(job: Pick<SavedJob, 'title' | 'description'>, set
       exclusions.push({ kind: 'rule', rule, evidence: snippet(text, literal.index, literal.length) });
       continue;
     }
-    if (AI_IN_RULE.test(rule)) {
+    if (AI_IN_RULE.test(rule) && BAN_IN_RULE.test(rule)) {
       const ban = AI_BANS.map((re) => find(text, re)).find((h) => h !== null);
       if (ban) exclusions.push({ kind: 'rule', rule, evidence: snippet(text, ban.index, ban.length) });
       continue;
     }
+    // Any other rule, including one that mentions AI without forbidding it
+    // ("AI chatbot projects"), is flagged for Dane to read the post himself.
     unchecked.push(rule);
   }
   return { exclusions, unchecked };
@@ -231,12 +256,18 @@ function scoreFit(text: string, settings: Settings, evidence: SavedEntry[]): Par
   };
 }
 
-/** Dollar amounts in the budget text: "$1,500", "$40-$60/hr", "$2k". */
+/** Dollar amounts in the budget text: "$1,500", "$40-$60/hr", "$40-60/hr", "$2k". */
 export function budgetAmounts(budget: string): number[] {
   const out: number[] = [];
-  for (const m of budget.matchAll(/\$\s?(\d[\d,]*(?:\.\d+)?)\s?([kK])?(?![A-Za-z0-9])/g)) {
-    const n = Number(m[1].replace(/,/g, '')) * (m[2] ? 1000 : 1);
-    if (Number.isFinite(n)) out.push(n);
+  const num = String.raw`(\d[\d,]*(?:\.\d+)?)\s?([kK])?`;
+  // A range's second number may go without its own "$": "$40-60/hr".
+  const re = new RegExp(String.raw`\$\s?` + num + String.raw`(?:\s*(?:-|–|—|to)\s*\$?\s?` + num + String.raw`)?(?![A-Za-z0-9])`, 'g');
+  for (const m of budget.matchAll(re)) {
+    for (const [digits, k] of [[m[1], m[2]], [m[3], m[4]]]) {
+      if (digits === undefined) continue;
+      const n = Number(digits.replace(/,/g, '')) * (k ? 1000 : 1);
+      if (Number.isFinite(n)) out.push(n);
+    }
   }
   return out;
 }
@@ -335,9 +366,9 @@ function scoreClient(client: string | null): Part {
     if (n === 0) flags.push('A new client with nothing spent yet: a flag for you, not an exclusion');
   }
 
-  const hires = /(\d+)\s+hires?\b/i.exec(client);
+  const hires = /(?<![\d,.])(\d{1,3}(?:,\d{3})+|\d+)\s+hires?\b/i.exec(client);
   if (hires) {
-    const h = Number(hires[1]);
+    const h = Number(hires[1].replace(/,/g, ''));
     if (h >= 5) score += 5;
     signals++;
     lines.push(`${h} hire${h === 1 ? '' : 's'} before`);

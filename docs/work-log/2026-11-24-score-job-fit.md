@@ -20,3 +20,13 @@ unverified payment method is only flagged for you to look at, not excluded.
 Each score is saved along with the preferences version it used, so an old
 score still explains itself after you change your settings. Showing the
 scores is the next piece of work, the inbox.
+
+After review: the "forbids AI" rule was too eager. A post about a banking
+platform, or one saying "we are not a big team, but we build AI products",
+was set aside as if it banned AI. Now only a "no" or "don't use" that is
+about the AI itself counts ("no AI", "do not use ChatGPT", "AI tools are not
+allowed"). A rule that mentions AI without banning it, like "AI chatbot
+projects", is now flagged for you to read yourself instead of being quietly
+passed. Clients with "2,000 hires" are read as 2,000, not 0; a budget of
+"$40-60/hr" is read as the whole range; and if scoring ever fails, the job
+you saved still lands on the list instead of an error page.

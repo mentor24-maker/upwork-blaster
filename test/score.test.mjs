@@ -98,6 +98,36 @@ test('a post that forbids AI meets an AI exclusion; one that does not, does not'
   assert.deepEqual(fine.exclusions, []);
 });
 
+test('a "no" or "ban" that does not govern the AI word is not a ban', () => {
+  const s = settings({ exclusions: ['Posts that forbid AI tools'] });
+  for (const description of [
+    'Our banking platform needs an AI assistant.',
+    'We are not a big team, but we build AI products and need a dashboard.',
+    'No prior experience needed with GPT, we will train you.',
+  ]) {
+    const r = findExclusions({ title: 'Dashboard', description }, s);
+    assert.deepEqual(r.exclusions, [], description);
+    assert.deepEqual(r.unchecked, [], description);
+  }
+  for (const description of [
+    'No AI please.',
+    'Please do not use ChatGPT for this.',
+    'Write it without AI.',
+    'Use of AI tools is strictly prohibited.',
+    'AI-generated work will not be accepted.',
+  ]) {
+    const r = findExclusions({ title: 'Blog posts', description }, s);
+    assert.equal(r.exclusions.length, 1, description);
+  }
+});
+
+test('a rule that mentions AI without forbidding it is flagged, never quietly passed', () => {
+  const s = settings({ exclusions: ['AI chatbot / LLM wrapper projects'] });
+  const r = findExclusions({ title: 'Support bot', description: 'Build a support bot on top of a model API.' }, s);
+  assert.deepEqual(r.exclusions, []);
+  assert.deepEqual(r.unchecked, ['AI chatbot / LLM wrapper projects']);
+});
+
 test('an exclusion rule the app cannot check is flagged for Dane, never quietly passed or guessed', () => {
   const s = settings({ exclusions: ['Impossible deadline'] });
   const ev = evaluateJob(job(), s, 1, []);
@@ -190,6 +220,7 @@ test('budget amounts are read from the ways Upwork writes them', () => {
   assert.deepEqual(budgetAmounts('$1,500'), [1500]);
   assert.deepEqual(budgetAmounts('$40.00 - $60.00 /hr'), [40, 60]);
   assert.deepEqual(budgetAmounts('Up to $2k'), [2000]);
+  assert.deepEqual(budgetAmounts('$40-60/hr'), [40, 60]);
   assert.deepEqual(budgetAmounts('Not sure yet'), []);
 });
 
@@ -245,4 +276,14 @@ test('a portfolio entry not approved for use never counts as evidence', () => {
   const j = saveJob(db, { ...job(), url: 'https://www.upwork.com/jobs/~01dddddddd' });
   const ev = scoreJob(db, j.id);
   assert.ok(!dim(ev, 'fit').evidence.some((e) => /Hidden/.test(e)));
+});
+
+test('a client\'s hire count is read with its thousands separator', () => {
+  const s = settings();
+  const big = dim(evaluateJob(job({ client: 'Payment verified, 2,000 hires' }), s, 1, []), 'client');
+  assert.ok(big.evidence.some((l) => l.startsWith('2000 hires')), big.evidence.join('\n'));
+  const ev = evaluateJob(job({ client: 'Payment verified, 2,000 hires' }), s, 1, []);
+  assert.ok(!ev.flags.some((f) => f.includes('no hires')), ev.flags.join('\n'));
+  const odd = dim(evaluateJob(job({ client: '1,005 hires' }), s, 1, []), 'client');
+  assert.ok(odd.evidence.some((l) => l.startsWith('1005 hires')), odd.evidence.join('\n'));
 });

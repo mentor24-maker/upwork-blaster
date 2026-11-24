@@ -25,6 +25,12 @@ export async function POST(request: Request): Promise<Response> {
   await fillJobFromPost(db, saved.id);
   // Then it is scored with the preferences in force (task 2.5), after the AI
   // so the score sees the fields it filled in.
-  scoreJob(db, saved.id);
+  // The job is saved either way: a scoring failure must not show a 500 page
+  // for a job that was kept (a second submit would then say "duplicate").
+  try {
+    scoreJob(db, saved.id);
+  } catch (err) {
+    console.error(`scoring job ${saved.id} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
   return redirect(`/jobs?saved=${saved.id}`, 303);
 }
