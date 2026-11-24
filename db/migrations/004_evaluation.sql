@@ -27,3 +27,7 @@ CREATE TABLE evaluation (
 );
 
 CREATE INDEX evaluation_by_opportunity ON evaluation (opportunity_id, id);
+
+-- Why the last scoring of a job failed, in plain words, so the jobs page can
+-- say the job is not scored (the job itself is kept). NULL once it scores.
+ALTER TABLE opportunity ADD COLUMN scoring_problem TEXT;

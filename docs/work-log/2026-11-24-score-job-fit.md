@@ -30,3 +30,17 @@ projects", is now flagged for you to read yourself instead of being quietly
 passed. Clients with "2,000 hires" are read as 2,000, not 0; a budget of
 "$40-60/hr" is read as the whole range; and if scoring ever fails, the job
 you saved still lands on the list instead of an error page.
+
+After the second review: more ordinary posts were being set aside by
+mistake, and now are not. "No AI experience required" is about what you need
+to know, not a ban. "We do not use AI yet and want you to add ChatGPT" is the
+client describing themselves (exactly the kind of job you want), not a rule
+for you. And a technology that is also a plain word, like Go or Swift, no
+longer matches "ready to go live" or "Swift delivery appreciated"; it has to
+be written as the name of the technology. A rule worded "Clients who don't
+allow AI" is now understood as a ban rule. A theme like "Custom web
+applications" now needs its words together in one sentence, so "customer",
+"website" and "applicant" scattered through a post no longer count. Clarity
+counts "feature" and "features" as one thing. And if scoring a job ever
+fails, the jobs page now says so in red on that job, instead of the failure
+only reaching a log you would never see.

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase, runMigrations } from '../lib/db.ts';
-import { saveJob } from '../lib/jobs.ts';
+import { getJob, saveJob } from '../lib/jobs.ts';
 import { savePreferences, DEFAULT_SETTINGS, DEFAULT_WEIGHTS } from '../lib/preferences.ts';
 import { addEntry } from '../lib/portfolio.ts';
 import {
@@ -13,6 +13,7 @@ import {
   NEUTRAL,
   rankEvaluations,
   scoreJob,
+  scoreJobAndRecord,
   SCORER_VERSION,
 } from '../lib/score.ts';
 
@@ -286,4 +287,93 @@ test('a client\'s hire count is read with its thousands separator', () => {
   assert.ok(!ev.flags.some((f) => f.includes('no hires')), ev.flags.join('\n'));
   const odd = dim(evaluateJob(job({ client: '1,005 hires' }), s, 1, []), 'client');
   assert.ok(odd.evidence.some((l) => l.startsWith('1005 hires')), odd.evidence.join('\n'));
+});
+
+// ---- review round 2: posts that read like a ban word by word, but are not
+
+test('"no AI experience needed" and a client saying they do not use AI yet are not bans', () => {
+  const s = settings({ exclusions: ['Posts that forbid AI tools'] });
+  for (const description of [
+    'No AI experience required, we will teach you.',
+    'Zero AI knowledge needed.',
+    'We do not use AI yet and want you to add ChatGPT to our CRM.',
+    'Our site does not use AI today; we want a chatbot.',
+    "We don't use GPT so far, but want to start.",
+  ]) {
+    const r = findExclusions({ title: 'Add AI to our CRM', description }, s);
+    assert.deepEqual(r.exclusions, [], description);
+  }
+  // Real bans still exclude, including one after a self-description.
+  for (const description of [
+    'We ask that you do not use AI for this.',
+    'Please do not use ChatGPT. We review every line.',
+    'We do not use AI yet. Do not use AI in your proposal either.',
+    'No AI.',
+  ]) {
+    assert.equal(findExclusions({ title: 'Blog posts', description }, s).exclusions.length, 1, description);
+  }
+});
+
+test('a tech name that is also an English word only excludes when it is the technology', () => {
+  const s = settings({ unsupportedTech: ['Go', 'Swift'] });
+  for (const description of [
+    'We are ready to go live next week.',
+    'Swift delivery appreciated.',
+    'Go ahead and send your best proposal.',
+  ]) {
+    assert.deepEqual(findExclusions({ title: 'Dashboard', description }, s).exclusions, [], description);
+  }
+  for (const [description, rule] of [
+    ['The backend is written in Go.', 'Go'],
+    ['Swift developer needed for our iOS app.', 'Swift'],
+    ['We use Swift and SwiftUI.', 'Swift'],
+  ]) {
+    const r = findExclusions({ title: 'Dashboard', description }, s);
+    assert.deepEqual(r.exclusions.map((e) => e.rule), [rule], description);
+  }
+  // A name that is not a word still matches in any case.
+  const wp = findExclusions({ title: 'Fix', description: 'A wordpress plugin.' }, settings());
+  assert.deepEqual(wp.exclusions.map((e) => e.rule), ['WordPress']);
+});
+
+test('"Clients who don\'t allow AI" is read as a ban rule', () => {
+  const s = settings({ exclusions: ["Clients who don't allow AI"] });
+  const r = findExclusions({ title: 'Blog', description: 'Use of AI is strictly prohibited.' }, s);
+  assert.equal(r.exclusions.length, 1);
+  assert.deepEqual(r.unchecked, []);
+  const n = findExclusions({ title: 'Blog', description: 'Write it without AI.' }, settings({ exclusions: ['No AI posts'] }));
+  assert.equal(n.exclusions.length, 1);
+});
+
+test('a theme\'s words must appear together in one sentence, as the same words', () => {
+  const s = settings({ themes: ['Custom web applications'], requiredTech: [] });
+  const scattered = evaluateJob(
+    job({ description: 'Our customer list is long.\n\nThe website is old.\n\nEach applicant gets a call.' }),
+    s,
+    1,
+    [],
+  );
+  assert.ok(!dim(scattered, 'fit').evidence.some((e) => /Matches your theme/.test(e)), dim(scattered, 'fit').evidence.join('\n'));
+  const together = evaluateJob(job({ description: 'We need a custom application for the web, for our team.' }), s, 1, []);
+  assert.ok(dim(together, 'fit').evidence.some((e) => /Custom web applications/.test(e)), dim(together, 'fit').evidence.join('\n'));
+});
+
+test('a clarity cue counts once, by its root', () => {
+  const s = settings();
+  const once = dim(evaluateJob(job({ description: 'One feature. Two features. Three features.' }), s, 1, []), 'clarity');
+  const named = once.evidence.find((e) => e.startsWith('Names'));
+  assert.equal(named, 'Names feature');
+});
+
+test('a scoring failure is recorded on the job, and cleared once it scores', () => {
+  const db = freshDb();
+  const j = saveJob(db, { ...job(), url: 'https://www.upwork.com/jobs/~01eeeeeeee' });
+  db.exec('ALTER TABLE evaluation RENAME TO evaluation_gone');
+  const problem = scoreJobAndRecord(db, j.id);
+  assert.match(problem, /evaluation/);
+  assert.equal(getJob(db, j.id).scoringProblem, problem, 'the job says why it is not scored');
+  db.exec('ALTER TABLE evaluation_gone RENAME TO evaluation');
+  assert.equal(scoreJobAndRecord(db, j.id), null);
+  assert.equal(getJob(db, j.id).scoringProblem, null);
+  assert.ok(latestEvaluation(db, j.id));
 });

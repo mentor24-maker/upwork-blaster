@@ -5,7 +5,7 @@ import { appDatabase } from '../../../lib/app_db.ts';
 import { redirect } from '../../../lib/gate.ts';
 import { readJobForm, saveJob } from '../../../lib/jobs.ts';
 import { fillJobFromPost } from '../../../lib/extractJob.ts';
-import { scoreJob } from '../../../lib/score.ts';
+import { scoreJobAndRecord } from '../../../lib/score.ts';
 
 export async function POST(request: Request): Promise<Response> {
   let form: FormData;
@@ -27,10 +27,8 @@ export async function POST(request: Request): Promise<Response> {
   // so the score sees the fields it filled in.
   // The job is saved either way: a scoring failure must not show a 500 page
   // for a job that was kept (a second submit would then say "duplicate").
-  try {
-    scoreJob(db, saved.id);
-  } catch (err) {
-    console.error(`scoring job ${saved.id} failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  // It is recorded on the job instead, and the jobs page says it is not scored.
+  const problem = scoreJobAndRecord(db, saved.id);
+  if (problem) console.error(`scoring job ${saved.id} failed: ${problem}`);
   return redirect(`/jobs?saved=${saved.id}`, 303);
 }

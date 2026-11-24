@@ -106,23 +106,29 @@ function stem(word: string): string {
   return cut.length >= 3 ? cut : w;
 }
 
+/** The endings a root may take and still be the same word: "application(s)", "integrate(d)". Not "customer" for "custom". */
+const SAME_WORD = '(?:s|es|e|ed|ing|ion|ions|ation|ations|ate|ates|ated|ating|ive|al)?';
+
 /**
  * Does the post speak of this theme? Either the whole phrase appears, or
- * every one of its words does (by root, in any order). "Custom web
- * applications" matches "a custom web application for our team".
+ * every one of its words does (by root, in any order) within one sentence.
+ * "Custom web applications" matches "a custom web application for our
+ * team", but not "customer" in one paragraph and "website" in another.
  */
 function themeMatch(text: string, theme: string): { index: number; length: number } | null {
   const whole = find(text, termPattern(theme));
   if (whole) return whole;
   const words = theme.split(/\s+/).filter((w) => w.length >= 3 && !STOPWORDS.has(w.toLowerCase()));
   if (words.length === 0) return null;
-  let first: { index: number; length: number } | null = null;
-  for (const w of words) {
-    const hit = find(text, new RegExp(`(?<![A-Za-z0-9])${escape(stem(w))}`, 'i'));
-    if (!hit) return null;
-    if (!first || hit.index < first.index) first = hit;
+  const patterns = words.map((w) => new RegExp(`(?<![A-Za-z0-9])${escape(stem(w))}${SAME_WORD}(?![A-Za-z0-9])`, 'i'));
+  const sentences = /[^.!?\n]+/g;
+  for (const s of text.matchAll(sentences)) {
+    const hits = patterns.map((re) => find(s[0], re));
+    if (hits.some((h) => h === null)) continue;
+    const first = hits.reduce((a, b) => (b!.index < a!.index ? b : a))!;
+    return { index: s.index + first.index, length: first.length };
   }
-  return first;
+  return null;
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
@@ -132,31 +138,101 @@ const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 const AI_WORD = String.raw`(?<![A-Za-z0-9])(?:AI|A\.I\.|artificial intelligence|ChatGPT|GPT|LLMs?)(?![A-Za-z0-9])`;
 const AI_IN_RULE = new RegExp(AI_WORD, 'i');
 /** A rule about forbidding AI, as opposed to one that merely mentions it ("AI chatbot projects"). */
-const BAN_IN_RULE = /\b(forbid\w*|prohibit\w*|ban|bans|banned|banning|disallow\w*|not allowed|not permitted|refus\w*)\b/i;
+const BAN_IN_RULE = new RegExp(
+  String.raw`\b(?:forbid\w*|prohibit\w*|ban|bans|banned|banning|disallow\w*|not allowed|not permitted|refus\w*|against|(?:do|does)\s+not\s+(?:allow|permit|accept|want)|(?:don'?t|doesn'?t|won'?t)\s+(?:allow|permit|accept|want))\b` +
+    String.raw`|\b(?:no|without)\s+(?:the\s+)?(?:(?:use|usage)\s+of\s+)?` + AI_WORD,
+  'i',
+);
+
 // The negation has to govern the AI word itself: "no AI", "do not use
 // ChatGPT", "without AI", "AI tools are not allowed", "AI-generated …
 // rejected". A "no" or "not" elsewhere in the sentence ("not a big team, but
-// we build AI products", "no prior experience needed with GPT") is not a ban.
+// we build AI products", "no prior experience needed with GPT") is not a ban,
+// and neither are these, which read like one word by word:
+// - "No AI experience required": the "no" is about what Dane must know.
+const NOT_A_SKILL = String.raw`(?![- ]+(?:[\w-]+\s+)?(?:experience|knowledge|background|skills?|expertise|familiarity|exposure|required|needed|necessary)\b)`;
+// - "We do not use AI yet": the client describing themselves, not a rule for Dane.
+const NOT_YET = String.raw`(?!\s+(?:yet|so far|at the moment|right now|currently|today)\b)`;
+const SELF_DESCRIBED =
+  /\b(?:we|i|they|it|our(?:\s+[\w'-]+){1,3}|my(?:\s+[\w'-]+){1,3}|the\s+(?:client|company|team|business|site|website|app|platform|product))\s+(?:(?:are|is|am|was|were)\s+)?(?:(?:currently|still|also)\s+)?(?:(?:do|does|did)\s+)?$/i;
+
 const AI_TOOLS = String.raw`(?:[- ](?:tools?|assistance|assistants?|generated|written|writing|content|use|usage|help))?`;
-const AI_BANS = [
+type BanPattern = { re: RegExp; selfCheck?: boolean };
+const AI_BANS: BanPattern[] = [
   // "No AI tools", "without the use of AI", "zero AI"
-  new RegExp(String.raw`\b(?:no|without|zero)\s+(?:the\s+)?(?:(?:use|usage)\s+of\s+|using\s+)?(?:any\s+)?` + AI_WORD, 'i'),
+  {
+    re: new RegExp(
+      String.raw`\b(?:no|without|zero)\s+(?:the\s+)?(?:(?:use|usage)\s+of\s+|using\s+)?(?:any\s+)?` + AI_WORD + NOT_A_SKILL + NOT_YET,
+      'gi',
+    ),
+  },
   // "Do not use ChatGPT", "please don't use any AI", "never submit AI"
-  new RegExp(
-    String.raw`\b(?:do not|don'?t|never|must not|mustn'?t|may not|cannot|can'?t|should not|shouldn'?t|not)\s+(?:to\s+)?(?:use|using|rely on|submit|employ)\s+(?:any\s+)?(?:the\s+)?` + AI_WORD,
-    'i',
-  ),
+  {
+    re: new RegExp(
+      String.raw`\b(?:do not|don'?t|never|must not|mustn'?t|may not|cannot|can'?t|should not|shouldn'?t|not)\s+(?:to\s+)?(?:use|using|rely on|submit|employ)\s+(?:any\s+)?(?:the\s+)?` +
+        AI_WORD + NOT_YET,
+      'gi',
+    ),
+    selfCheck: true,
+  },
   // "We forbid AI", "prohibits the use of ChatGPT"
-  new RegExp(String.raw`\b(?:forbid|forbids|prohibit|prohibits|ban|bans|disallow|disallows)\s+(?:the\s+)?(?:(?:use|usage)\s+of\s+)?(?:any\s+)?` + AI_WORD, 'i'),
+  { re: new RegExp(String.raw`\b(?:forbid|forbids|prohibit|prohibits|ban|bans|disallow|disallows)\s+(?:the\s+)?(?:(?:use|usage)\s+of\s+)?(?:any\s+)?` + AI_WORD, 'gi') },
   // "AI tools are not allowed", "Use of AI is strictly prohibited"
-  new RegExp(
-    String.raw`(?:\b(?:use|usage)\s+of\s+(?:any\s+)?)?` + AI_WORD + AI_TOOLS +
-      String.raw`\s+(?:is|are|will be)\s+(?:strictly\s+)?(?:not allowed|not permitted|not accepted|prohibited|forbidden|banned|disallowed)\b`,
-    'i',
-  ),
+  {
+    re: new RegExp(
+      String.raw`(?:\b(?:use|usage)\s+of\s+(?:any\s+)?)?` + AI_WORD + AI_TOOLS +
+        String.raw`\s+(?:is|are|will be)\s+(?:strictly\s+)?(?:not allowed|not permitted|not accepted|prohibited|forbidden|banned|disallowed)\b`,
+      'gi',
+    ),
+  },
   // "AI-generated proposals will be rejected"
-  new RegExp(AI_WORD + String.raw`[- ](?:generated|written)\b[^.\n]{0,60}\b(?:reject\w*|not (?:be )?accepted|disqualif\w*|declin\w*|ignored)`, 'i'),
+  { re: new RegExp(AI_WORD + String.raw`[- ](?:generated|written)\b[^.\n]{0,60}\b(?:reject\w*|not (?:be )?accepted|disqualif\w*|declin\w*|ignored)`, 'gi') },
 ];
+
+/** The first place the post forbids AI, or null. Every match is weighed, not just the first. */
+function findAiBan(text: string): { index: number; length: number } | null {
+  for (const { re, selfCheck } of AI_BANS) {
+    for (const m of text.matchAll(re)) {
+      if (selfCheck) {
+        // The words before the negation, back to the start of the sentence.
+        const before = text.slice(0, m.index).split(/[.!?\n]/).pop() ?? '';
+        if (SELF_DESCRIBED.test(before)) continue;
+      }
+      return { index: m.index, length: m[0].length };
+    }
+  }
+  return null;
+}
+
+/**
+ * Technology names that are also ordinary English words ("Go live", "Swift
+ * delivery"). These match only written with a capital, as a name is, and a
+ * capital at the start of a sentence only counts when a tech word follows
+ * ("Swift developer needed"), because there it may just be the first word.
+ */
+const WORD_LIKE_TECH = new Set([
+  'go', 'swift', 'rust', 'ruby', 'dart', 'java', 'spark', 'flutter', 'react', 'express', 'rails', 'spring',
+  'ember', 'julia', 'crystal', 'elixir', 'electron', 'meteor', 'next', 'nest', 'unity', 'elm', 'pearl', 'gatsby',
+  'hugo', 'jest', 'mocha', 'chef', 'puppet', 'ansible', 'kafka', 'airflow', 'shiny', 'apex', 'ionic', 'phoenix',
+]);
+const TECH_CONTEXT = /^\s*(?:developers?|devs?|engineers?|programmers?|experts?|specialists?|apps?|applications?|code|codebase|projects?|experience|backend|back-end|frontend|front-end|api|apis|language|version|services?|server|stack|framework|knowledge|skills?|\d)\b/i;
+
+/** Does the post name this technology? Short or word-like names are matched with care. */
+function findTech(text: string, tech: string): { index: number; length: number } | null {
+  const name = tech.trim();
+  const wordLike = WORD_LIKE_TECH.has(name.toLowerCase()) || (name.length <= 4 && /^[A-Za-z][a-z]*$/.test(name));
+  if (!wordLike) return find(text, termPattern(name));
+  const re = new RegExp(`(?<![A-Za-z0-9])${escape(name)}(?![A-Za-z0-9])`, 'gi');
+  for (const m of text.matchAll(re)) {
+    const word = m[0];
+    if (word[0] !== word[0].toUpperCase()) continue; // "go live", "swift delivery"
+    const before = text.slice(0, m.index);
+    const sentenceStart = /(?:^|[.!?:]\s+|\n\s*(?:[-*•]\s*|\d+[.)]\s*)?)$/.test(before);
+    if (sentenceStart && !TECH_CONTEXT.test(text.slice(m.index + word.length))) continue;
+    return { index: m.index, length: word.length };
+  }
+  return null;
+}
 
 /**
  * The hard exclusions the job meets. A technology Dane does not take that
@@ -174,7 +250,7 @@ export function findExclusions(job: Pick<SavedJob, 'title' | 'description'>, set
   const unchecked: string[] = [];
 
   for (const tech of settings.unsupportedTech) {
-    const hit = find(text, termPattern(tech));
+    const hit = findTech(text, tech);
     if (hit) exclusions.push({ kind: 'unsupported-tech', rule: tech, evidence: snippet(text, hit.index, hit.length) });
   }
 
@@ -185,7 +261,7 @@ export function findExclusions(job: Pick<SavedJob, 'title' | 'description'>, set
       continue;
     }
     if (AI_IN_RULE.test(rule) && BAN_IN_RULE.test(rule)) {
-      const ban = AI_BANS.map((re) => find(text, re)).find((h) => h !== null);
+      const ban = findAiBan(text);
       if (ban) exclusions.push({ kind: 'rule', rule, evidence: snippet(text, ban.index, ban.length) });
       continue;
     }
@@ -222,7 +298,7 @@ function scoreFit(text: string, settings: Settings, evidence: SavedEntry[]): Par
     lines.push(`Matches your theme${themes.length > 1 ? 's' : ''}: ${themes.join(', ')}`);
   }
 
-  const tech = settings.requiredTech.filter((t) => find(text, termPattern(t)));
+  const tech = settings.requiredTech.filter((t) => findTech(text, t));
   if (tech.length > 0) {
     score += Math.min(20, 10 * tech.length);
     sources++;
@@ -313,9 +389,17 @@ function scoreBudget(job: Pick<SavedJob, 'budget' | 'jobType'>): Part {
 
 const CLARITY_CUES = /\b(deliverables?|requirements?|scope|milestones?|acceptance|timeline|deadline|user stories|must|features?|integrat\w+|screens?|pages?)\b/gi;
 
+function cueRoot(cue: string): string {
+  const c = cue.toLowerCase().replace(/\s+/g, ' ');
+  if (c.startsWith('integrat')) return 'integration';
+  if (c === 'user stories') return 'user story';
+  return c.replace(/s$/, '');
+}
+
 function scoreClarity(description: string): Part {
   const words = description.split(/\s+/).filter(Boolean).length;
-  const cues = new Set([...description.matchAll(CLARITY_CUES)].map((m) => m[0].toLowerCase()));
+  // Each cue counts once, by its root: "feature" and "features" are one cue.
+  const cues = new Set([...description.matchAll(CLARITY_CUES)].map((m) => cueRoot(m[0])));
   const bullets = (description.match(/^\s*([-*•]|\d+[.)])\s+\S/gm) ?? []).length;
   let score = words < 30 ? 25 : words < 80 ? 45 : words < 200 ? 60 : 70;
   score += Math.min(3, cues.size) * 7;
@@ -529,6 +613,26 @@ export function scoreJob(db: DatabaseSync, opportunityId: number): SavedEvaluati
   const prefs = currentPreferences(db);
   const ev = evaluateJob(job, prefs?.settings ?? DEFAULT_SETTINGS, prefs?.version ?? null, approvedEvidence(db));
   return saveEvaluation(db, ev);
+}
+
+/**
+ * Score a job and record how it went on the job: a failure is kept as the
+ * job's `scoring_problem` in plain words, so the jobs page says it is not
+ * scored (CLAUDE.md: a step that fails says so); a success clears it. Never
+ * throws for a scoring failure: the job is saved either way. Returns the
+ * problem, or null when it scored.
+ */
+export function scoreJobAndRecord(db: DatabaseSync, opportunityId: number): string | null {
+  let problem: string | null = null;
+  try {
+    if (!scoreJob(db, opportunityId)) problem = `no saved job ${opportunityId}`;
+  } catch (err) {
+    problem = err instanceof Error ? err.message : String(err);
+  }
+  db.prepare(
+    `UPDATE opportunity SET scoring_problem = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+  ).run(problem === null ? null : problem.slice(0, 500), opportunityId);
+  return problem;
 }
 
 /** The score in force for a job: its newest. */
