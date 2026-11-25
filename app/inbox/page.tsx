@@ -1,6 +1,7 @@
 import { appDatabase } from '../../lib/app_db.ts';
 import { buildInbox, DECISION_LABELS, getDecision, MAX_REASON, type Card } from '../../lib/inbox.ts';
 import { getJob, type SavedJob } from '../../lib/jobs.ts';
+import { proposalIdsByJob } from '../../lib/draft.ts';
 
 // Read on every visit: the cards change with each saved job and each decision.
 export const dynamic = 'force-dynamic';
@@ -16,6 +17,7 @@ const muted = { color: '#666', fontSize: '0.9em' } as const;
 const ERRORS: Record<string, string> = {
   'bad-decision': 'That button did not say which job or which decision. Nothing was saved.',
   'not-found': 'That job is no longer saved. Nothing was saved.',
+  'no-workspace': 'Pursuing it was saved, but its proposal workspace could not be opened. Press Pursue again to retry.',
 };
 
 function Buttons({ card }: { card: Card }) {
@@ -40,13 +42,20 @@ function Buttons({ card }: { card: Card }) {
   );
 }
 
-function Decision({ card }: { card: Card }) {
+function Decision({ card, proposals }: { card: Card; proposals: Map<number, number> }) {
   const d = card.decision;
   if (!d) return null;
+  const proposal = proposals.get(card.job.id);
   return (
     <div style={muted}>
       <strong>{DECISION_LABELS[d.decision]}</strong> since {when(d.createdAt)} Mountain time
       {d.reason ? <> — “{d.reason}”</> : null}
+      {proposal !== undefined && d.decision === 'pursue' ? (
+        <>
+          {' '}
+          · <a href={`/proposals/${proposal}`}>Open its proposal workspace</a>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -71,7 +80,7 @@ function Title({ job }: { job: SavedJob }) {
   );
 }
 
-function RankedCard({ card }: { card: Card }) {
+function RankedCard({ card, proposals }: { card: Card; proposals: Map<number, number> }) {
   return (
     <li id={`job-${card.job.id}`} style={box}>
       <div style={{ fontSize: '1.1em' }}>
@@ -101,7 +110,7 @@ function RankedCard({ card }: { card: Card }) {
           ))}
         </ul>
       </details>
-      <Decision card={card} />
+      <Decision card={card} proposals={proposals} />
       <Buttons card={card} />
     </li>
   );
@@ -115,6 +124,7 @@ export default async function InboxPage({
   const { decided, error } = await searchParams;
   const db = appDatabase();
   const inbox = buildInbox(db);
+  const proposals = proposalIdsByJob(db);
   const done = typeof decided === 'string' && /^\d{1,12}$/.test(decided) ? getDecision(db, Number(decided)) : undefined;
   const doneJob = done ? getJob(db, done.opportunityId) : undefined;
   const problem = typeof error === 'string' && Object.hasOwn(ERRORS, error) ? ERRORS[error] : null;
@@ -151,7 +161,7 @@ export default async function InboxPage({
           <h2>Top {inbox.top.length}</h2>
           <ol style={{ listStyle: 'none', padding: 0 }}>
             {inbox.top.map((c) => (
-              <RankedCard key={c.job.id} card={c} />
+              <RankedCard key={c.job.id} card={c} proposals={proposals} />
             ))}
           </ol>
         </section>
@@ -162,7 +172,7 @@ export default async function InboxPage({
           <h2>More jobs ({inbox.more.length})</h2>
           <ol style={{ listStyle: 'none', padding: 0 }}>
             {inbox.more.map((c) => (
-              <RankedCard key={c.job.id} card={c} />
+              <RankedCard key={c.job.id} card={c} proposals={proposals} />
             ))}
           </ol>
         </section>
@@ -222,7 +232,7 @@ export default async function InboxPage({
                     <Title job={c.job} />
                   </strong>
                   {c.score !== null ? <span style={muted}> · fit score {c.score}</span> : null}
-                  <Decision card={c} />
+                  <Decision card={c} proposals={proposals} />
                   <form method="post" action="/api/decisions" style={{ marginTop: '0.5rem' }}>
                     <input type="hidden" name="id" value={String(c.job.id)} />
                     <button type="submit" name="decision" value="revisit">
