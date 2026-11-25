@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import { appDatabase } from '../../../lib/app_db.ts';
+import { approvalState } from '../../../lib/approval.ts';
 import { KIND_LABELS, proposalFlags } from '../../../lib/claimCheck.ts';
 import { getProposal, MAX_ANSWER, MAX_DRAFT, MAX_QUESTION, unanswered } from '../../../lib/draft.ts';
 import { getJob, type SavedJob } from '../../../lib/jobs.ts';
@@ -48,6 +49,7 @@ export default async function ProposalPage({
   const open = proposal.questions.filter(unanswered).length;
   // The claim check (lib/claimCheck.ts), worked out afresh on every visit.
   const flags = proposalFlags(db, proposal.id);
+  const approval = approvalState(db, proposal.id);
   const done = pick(SAVED, saved);
   const problem = pick(ERRORS, error);
 
@@ -62,6 +64,20 @@ export default async function ProposalPage({
         copy it into Upwork yourself.
       </p>
       {done ? <p role="status">{done}</p> : null}
+      <p id="approval-state" data-approval={approval.state}>
+        {approval.state === 'approved' ? (
+          <strong style={{ color: '#2a6a34' }}>✓ Approved by you {when(approval.approval.approvedAt)} Mountain time.</strong>
+        ) : approval.state === 'cancelled' ? (
+          <strong style={{ color: '#a40000' }}>Your approval is gone: {approval.why}.</strong>
+        ) : approval.state === 'on-hold' ? (
+          <strong style={{ color: '#a40000' }}>Your approval is on hold: something now blocks it.</strong>
+        ) : (
+          <span style={muted}>Not approved yet.</span>
+        )}{' '}
+        <a href={`/proposals/${proposal.id}/review`}>
+          {approval.state === 'approved' ? 'See what you approved →' : 'Final review and approval →'}
+        </a>
+      </p>
       {problem ? (
         <p role="alert" style={{ color: '#a40000' }}>
           {problem}
