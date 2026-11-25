@@ -415,6 +415,16 @@ function scoreClarity(description: string): Part {
   return { score: clamp(score), confidence: 'medium', evidence: lines, unknowns: [] };
 }
 
+const PAYMENT_UNVERIFIED = /payment (method )?(unverified|not verified)/i;
+const PAYMENT_VERIFIED = /payment (method )?verified/i;
+
+/** How a client line reads on payment: the one reading the score and the AI check (lib/extractJob.ts) share. */
+export function paymentStatus(client: string): 'verified' | 'unverified' | null {
+  if (PAYMENT_UNVERIFIED.test(client)) return 'unverified';
+  if (PAYMENT_VERIFIED.test(client)) return 'verified';
+  return null;
+}
+
 function scoreClient(client: string | null): Part {
   if (!client) {
     return { score: NEUTRAL, confidence: 'low', evidence: [], unknowns: ['client history'] };
@@ -424,12 +434,13 @@ function scoreClient(client: string | null): Part {
   const lines: string[] = [];
   const flags: string[] = [];
 
-  if (/payment (method )?(unverified|not verified)/i.test(client)) {
+  const payment = paymentStatus(client);
+  if (payment === 'unverified') {
     score -= 10;
     signals++;
     lines.push('Payment method not verified');
     flags.push('The client’s payment method is not verified: a flag for you, not an exclusion');
-  } else if (/payment (method )?verified/i.test(client)) {
+  } else if (payment === 'verified') {
     score += 15;
     signals++;
     lines.push('Payment method verified');

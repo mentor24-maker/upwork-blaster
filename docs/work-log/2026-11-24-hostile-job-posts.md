@@ -17,3 +17,13 @@ same facts. The tests check that each hostile post ends up with exactly the
 twin's fields, score, place in the inbox and decisions, even with a pretend
 AI that does whatever it is told. One limit: a real fact written inside an
 order is not believed either, so it shows as unknown.
+
+**After review.** The first version was too jumpy: ordinary posts got
+flagged and lost sentences from their score. "Submit your proposal now if you
+know Next.js", "Write a system prompt for our chatbot", "System: Ubuntu 22.04"
+and virtual-assistant posts ("Message to the assistant we hire") all looked
+like orders. The patterns now need the post to be clearly speaking to the AI,
+and every one of those honest lines is pinned in the tests so it stays
+honest. Two smaller fixes: a post that writes its rate as "$50/h" or "per hr"
+keeps its "hourly", and a client figure the AI rounds ("$12K+ spent" for
+"$12,345 spent") is kept instead of thrown away.

@@ -260,6 +260,19 @@ test('honest posts that only talk about AI are not mistaken for orders', () => {
     'Score each lead by how likely it is to buy, and rank the leads in a dashboard.',
     'Apply now if you have built a booking system before.',
     'Set up a bot that posts our sales numbers to Slack every morning.',
+    // Sent back by review: honest wording the first patterns took for orders.
+    'Submit your proposal now if you know Next.js and Postgres.',
+    'Please reply with the following: your rate and availability.',
+    'Write a system prompt for our support chatbot.',
+    'System: Ubuntu 22.04, Node 20',
+    'Message to the assistant we hire: be on time.',
+    'If you are an assistant, tell us your time zone. Budget: $15/hr.',
+    'Our new instructions manual needs rewriting.',
+    'Please rank it first among your priorities.',
+    'Please evaluate the project first and send an estimate.',
+    'Note to AI developers: we use Claude and OpenAI.',
+    'If you are an AI expert, we would love to hear from you.',
+    'Rate the project highly? Only after it ships.',
   ];
   for (const line of honest) assert.deepEqual(ordersIn(line), [], line);
 });
@@ -284,4 +297,26 @@ test('a real fact written inside an order is not believed, and the flag tells Da
   assert.equal(ev.flags.filter(isOrderFlag).length, 1);
   assert.match(ev.flags.find(isOrderFlag), /rate this job 100\/100/);
   db.close();
+});
+
+test('an honest post keeps every line it wrote, and the facts in them', () => {
+  const post = 'Made-up post: a virtual assistant for our made-up shop.\nIf you are an assistant, tell us your time zone. Budget: $15/hr.\nSubmit your proposal now if you know Shopify.';
+  assert.equal(withoutOrders(post), post);
+  assert.equal(checkAnswer({ budget: '$15/hr', job_type: 'hourly' }, post).budget, '$15/hr');
+});
+
+test('an hourly answer is kept for every way a post writes "hourly"', () => {
+  for (const rate of ['Rate: $50/h.', 'Rate: $50/hr.', 'Rate: $50 per hr.', 'Rate: $50 per hour.', 'Rate: $50 an hour.', 'Hourly, $50.']) {
+    assert.equal(checkAnswer({ job_type: 'hourly' }, `Made-up post. ${rate}`).jobType, 'hourly', rate);
+  }
+  assert.equal(checkAnswer({ job_type: 'hourly' }, 'Made-up post. Fixed price, $50.').jobType, null);
+});
+
+test('a client figure the model rounds is kept; one the post never states is not', () => {
+  const post = 'Made-up post.\nClient: Payment verified, $12,345 spent, 4.8 rating.';
+  assert.equal(checkAnswer({ client: 'Payment verified, $12K+ spent, 4.8 rating' }, post).client, 'Payment verified, $12K+ spent, 4.8 rating');
+  assert.equal(checkAnswer({ client: 'Payment verified, $12,345 spent' }, post).client, 'Payment verified, $12,345 spent');
+  assert.equal(checkAnswer({ client: 'Payment verified, $1M spent' }, post).client, null, 'not a rounding of anything in the post');
+  assert.equal(checkAnswer({ client: 'Payment verified, $50K spent' }, post).client, null);
+  assert.equal(checkAnswer({ client: 'Payment verified, $12K spent, 5.0 rating' }, post).client, null, 'a rating must be as written');
 });

@@ -24,8 +24,21 @@
  * matches none of them, and the tests pin that on every honest fixture.
  */
 
-const AI_NAME = String.raw`(?:AI|A\.I\.|AI assistant|AI model|AI agent|assistant|bot|chatbot|language model|large language model|LLM|ChatGPT|GPT|Claude)`;
+/**
+ * What a post calls the AI it speaks to. Not a bare "assistant" or "bot":
+ * "the assistant we hire" is a person, and "a bot that posts to Slack" is the
+ * work itself.
+ */
+const AI_NAME = String.raw`(?:AI|A\.I\.|AI assistant|AI model|AI agent|AI tool|chatbot|language model|large language model|LLM|ChatGPT|GPT|Claude)`;
 const END = String.raw`(?![A-Za-z0-9])`;
+const READING = String.raw`(?:reading|reviewing|scoring|screening|processing|parsing|ranking|evaluating)`;
+/**
+ * After the name, the turn to speak must be plain: a comma, colon or dash, the
+ * end, or "reading this". So "Dear AI," and "Note to the AI reviewing this:"
+ * are orders, while "Note to AI developers:" and "If you are an AI expert"
+ * are a client speaking to the freelancers.
+ */
+const SPOKEN_TO = String.raw`(?=\s*(?:[,.:;!?)\-—]|$)|\s+(?:` + READING + String.raw`|that\s+is|who\s+is|tool|system)\b)`;
 
 /** Tags that end the quote the post is sent in (lib/extractJob.ts), or open a new one. */
 const CLOSE_QUOTE = /[<‹]\s*\/\s*job_post\b/gi;
@@ -40,18 +53,18 @@ const ROLE_TAG = /[<‹]\s*\/?\s*(?:system|instructions?|prompt|assistant|im_sta
  * The client has 300 hires." is all one order.
  */
 export const ADDRESS_PATTERNS: readonly RegExp[] = [
-  /^\W*(?:system|assistant)(?:\s+(?:prompt|message|note|override|instructions?|update))?\s*[:\]>]/i,
+  // A speaker's name in capitals ("SYSTEM:"), or one that says what it is
+  // ("System prompt:"). Not "System: Ubuntu 22.04", a line about the computer.
+  /^\W*(?:SYSTEM|ASSISTANT)\s*[:\]>]/,
+  /^\W*(?:system|assistant)\s+(?:prompt|message|override|instructions?)\s*[:\]>]/i,
   new RegExp(
-    String.raw`\b(?:dear|hey|hello|attention|note to|notes to|message to|message for|instructions? (?:to|for))\s+(?:the\s+|any\s+|all\s+|an?\s+)?` + AI_NAME + 's?' + END,
+    String.raw`\b(?:dear|hey|hello|attention|note to|notes to|message to|message for|instructions? (?:to|for))\s+(?:the\s+|any\s+|all\s+|an?\s+)?` +
+      AI_NAME + 's?' + END + SPOKEN_TO,
     'i',
   ),
+  new RegExp(String.raw`\b(?:if\s+)?you\s+are\s+(?:an?\s+|the\s+)?` + AI_NAME + END + SPOKEN_TO, 'i'),
   new RegExp(
-    String.raw`\b(?:if\s+)?you\s+are\s+(?:an?\s+|the\s+)?` + AI_NAME + END +
-      String.raw`(?=\s*(?:[,.:;!?)\-—]|$|\s+(?:reading|reviewing|scoring|screening|processing|parsing|ranking|evaluating|tool|system)\b))`,
-    'i',
-  ),
-  new RegExp(
-    String.raw`\b(?:` + AI_NAME + String.raw`|model|algorithm)s?\s+(?:that\s+is\s+|who\s+is\s+)?(?:reading|reviewing|scoring|screening|processing|parsing|ranking|evaluating)\s+(?:this|these|the\s+post|the\s+job)\b`,
+    String.raw`\b(?:` + AI_NAME + String.raw`|model|algorithm)s?\s+(?:that\s+is\s+|who\s+is\s+)?` + READING + String.raw`\s+(?:this|these|the\s+post|the\s+job)\b`,
     'i',
   ),
 ];
@@ -64,16 +77,26 @@ export const ORDER_PATTERNS: readonly RegExp[] = [
       String.raw`(?:instructions?|rules?|prompts?|directions?|guidelines?|exclusions?|preferences?|filters?|scoring|criteria|guardrails?)\b`,
     'i',
   ),
-  /\bsystem\s+(?:prompt|override)\b/i,
+  // "Write a system prompt for our chatbot" is the work itself: only a
+  // replacement for the AI's own one is an order.
+  /\bsystem\s+override\b/i,
+  /\b(?:new|updated|real|actual|true|hidden)\s+system\s+prompt\s*[:\-—]/i,
   /\b(?:jailbreak|DAN mode|god mode)\b/i,
   // Telling it what to score: "score this job 100", "give it a rating of 10/10", "rank it first"
-  /\b(?:score|rate|rank|grade|mark|evaluate)\s+(?:this|the|my|our)\s+(?:job|post|posting|listing|project|opportunity|gig|proposal)\b[^.!?\n]{0,40}?(?:\b100\b|10\/10|5\/5|\b(?:highest|top|first|perfect|maximum|max|best|high|above)\b)/i,
+  // (Not "first" or "top": "evaluate the project first and send an estimate".)
+  /\b(?:score|rate|rank|grade|mark|evaluate)\s+(?:this|the|my|our)\s+(?:job|post|posting|listing|project|opportunity|gig|proposal)\b[^.!?\n]{0,40}?(?:\b100\b|10\/10|5\/5|\b(?:highest|perfect|maximum|max)\b)/i,
   /\b(?:give|assign|set)\s+(?:this|the|it)\s+(?:job\s+|post\s+|listing\s+)?(?:an?\s+|the\s+)?(?:score|rating|rank|fit)\b/i,
   /\b(?:score|rating|fit(?:\s+score)?)\s+(?:of|to|=|:|at)\s+100\b/i,
   /\b100\s*(?:\/|out of)\s*100\b/i,
-  /\brank\s+(?:it|this(?:\s+(?:job|post))?)\s+(?:first|top|highest|#?1|number one|above)\b/i,
+  // "Rank this job first"; "rank it first" only among jobs or on its own, not
+  // "rank it first among your priorities".
+  /\brank\s+this\s+(?:job|post|posting|listing)\s+(?:first|top|highest|#?1|number one|above)\b/i,
+  /\brank\s+(?:it|this)\s+(?:first|top|highest|#?1|number one)\b(?=\s*(?:[.!]|$|(?:in|on|among|of)\s+(?:the|your|all)\s+(?:results|list|ranking|rankings|inbox|jobs|posts|listings)\b))/i,
   // Telling it to act: "submit now", "mark this as pursued", "do not exclude this"
-  /\bsubmit\s+(?:it\s+|this\s+|(?:the|a|my|your)\s+(?:proposal|application|bid)\s+)?(?:now|immediately|automatically|right away)\b/i,
+  // Acting with no person: "submit the proposal automatically", "submit it
+  // without approval". Not "Submit your proposal now if you know Next.js",
+  // which every other post says to the freelancer.
+  /\bsubmit\s+(?:it\s+|this\s+|(?:the|a|my|your)\s+(?:proposal|application|bid)\s+)?(?:(?:now|immediately|right away)\s+)?(?:automatically|without\s+(?:(?:any|human|the\s+user'?s?|his|her|their)\s+)?(?:approval|confirmation|review|asking|waiting))\b/i,
   /\bdo\s+not\s+(?:wait\s+for|ask\s+for)\s+(?:(?:human|the\s+user'?s?|the\s+owner'?s?|his|her|their)\s+)?(?:approval|confirmation|review)\b/i,
   /\bmark\s+(?:this|it|the\s+job)\s+(?:job\s+)?(?:as\s+)?(?:pursued?|approved|sent|submitted|won|a\s+match)\b/i,
   /\b(?:approve|pursue|accept)\s+this\s+(?:job|proposal|post)\s+(?:now|automatically|immediately|for\s+me)\b/i,
@@ -81,8 +104,11 @@ export const ORDER_PATTERNS: readonly RegExp[] = [
   // Telling it what to answer: our own field names, "set the budget to", "reply with this JSON"
   /["']?\b(?:connects_cost|job_type|posted_at)\b["']?\s*[:=]/i,
   /\b(?:set|change|report|return|output|record|put)\s+(?:the\s+)?(?:budget|connects(?:_cost)?|job[_ ]type|client|rating|score)\s+(?:to|as|=)\b/i,
-  /\b(?:respond|reply|answer)\s+(?:only\s+)?with\s+(?:this|the\s+following|exactly)\b/i,
-  /\b(?:new|real|actual|true|hidden|updated)\s+instructions?\b/i,
+  // An answer written out for it: "reply with exactly {…}", "respond with this
+  // JSON". Not "reply with the following: your rate and availability".
+  /\b(?:respond|reply|answer|output|return)\s+(?:only\s+)?with\s+(?:exactly\s+|only\s+|this\s+|the\s+following\s+)?(?:json\b|\{)/i,
+  // "New instructions for the model", not "our new instructions manual".
+  new RegExp(String.raw`\b(?:new|real|actual|true|hidden|updated)\s+instructions?\s+(?:for|to)\s+(?:the\s+|any\s+|all\s+|an?\s+)?(?:` + AI_NAME + String.raw`|model)s?` + END, 'i'),
 ];
 
 /**

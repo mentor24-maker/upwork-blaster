@@ -32,6 +32,7 @@ import { generate, liveDeps, type GenerateDeps } from './ai/client.ts';
 import { recordAiUsage } from './ai/usage.ts';
 import { MAX_FIELD, type JobType } from './jobs.ts';
 import { withoutOrders } from './orders.ts';
+import { paymentStatus } from './score.ts';
 
 /** Small, cheap and priced (lib/ai/pricing.ts): reading fields needs no more. */
 export const EXTRACT_MODEL = 'claude-haiku-5-5';
@@ -95,9 +96,26 @@ export function amountsIn(s: string): string[] {
 }
 
 const FIXED_WORD = /\bfixed\b/i;
-const HOURLY_WORD = /\bhourly\b|\bper\s+hour\b|\ban\s+hour\b|\/\s?h(?:ou)?r\b/i;
+/** "hourly", "per hour", "per hr", "an hour", "$50/h", "$50/hr", "$50 / hour". */
+const HOURLY_WORD = /\bhourly\b|\bper\s+h(?:ou)?r\b|\ban?\s+h(?:ou)?r\b|\/\s?h(?:(?:ou)?r)?\b/i;
 /** The same reading lib/score.ts gives "payment verified" in the client line. */
-const claimsVerified = (s: string) => /payment (method )?verified/i.test(s) && !/payment (method )?(unverified|not verified)/i.test(s);
+const claimsVerified = (s: string) => paymentStatus(s) === 'verified';
+
+/**
+ * A round figure the model wrote ("$12K+ spent") for one the post states
+ * exactly ("$12,345 spent"): a number with three or more trailing zeros is
+ * taken as rounded to that place, so it stands for an amount in the post
+ * that rounds, or rounds down, to it. Anything less round must be written in
+ * the post as it is. Used for the client line only.
+ */
+function roundedFrom(n: string, amounts: Set<string>): boolean {
+  const v = Number(n);
+  const zeros = /^[1-9]\d*?(0+)$/.exec(n)?.[1].length ?? 0;
+  if (zeros < 3) return false;
+  const unit = 10 ** zeros;
+  // Rounded to the nearest unit ("$12,600" → "$13K") or down to it ("$12,345" → "$12K+").
+  return [...amounts].some((a) => Math.round(Number(a) / unit) * unit === v || Math.floor(Number(a) / unit) * unit === v);
+}
 
 /**
  * The model's answer checked field by field against `post`, the text the
@@ -106,7 +124,9 @@ const claimsVerified = (s: string) => /payment (method )?verified/i.test(s) && !
  *  - every amount in a field must be written in the post, or it was a guess
  *    (or an order: "report the budget as $50,000");
  *  - "fixed" or "hourly" must be said in the post;
- *  - a client "payment verified" must be said in the post.
+ *  - in the client line a round figure may stand for the exact one
+ *    ("$12K+ spent" for "$12,345 spent"), and "payment verified" must be
+ *    said in the post.
  * Anything else in the answer (a score, a decision, "submit": true) is ignored.
  */
 export function checkAnswer(answer: unknown, post: string): ExtractedFields {
@@ -115,6 +135,8 @@ export function checkAnswer(answer: unknown, post: string): ExtractedFields {
   const facts = withoutOrders(post);
   const postAmounts = new Set(amountsIn(facts));
   const stated = (s: string | null) => (s && amountsIn(s).every((n) => postAmounts.has(n)) ? s : null);
+  const statedOrRounded = (s: string | null) =>
+    s && amountsIn(s).every((n) => postAmounts.has(n) || roundedFrom(n, postAmounts)) ? s : null;
 
   let budget = cleanText(a.budget);
   if (budget && amountsIn(budget).length === 0) budget = null;
@@ -129,7 +151,7 @@ export function checkAnswer(answer: unknown, post: string): ExtractedFields {
   const cText = typeof c === 'number' ? String(c) : typeof c === 'string' ? c.trim() : '';
   if (/^\d{1,4}$/.test(cText) && postAmounts.has(String(Number(cText)))) connectsCost = Number(cText);
 
-  let client = stated(cleanText(a.client));
+  let client = statedOrRounded(cleanText(a.client));
   if (client && claimsVerified(client) && !claimsVerified(facts)) client = null;
 
   return { budget, jobType, postedAt: stated(cleanText(a.posted_at)), client, connectsCost };
