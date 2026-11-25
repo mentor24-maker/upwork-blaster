@@ -324,7 +324,7 @@ test('the workspace form saves an answer, adds a question by hand, and refuses a
   }
 });
 
-test('the workspace form reader accepts only its three actions', () => {
+test('the workspace form reader accepts only its four actions', () => {
   const form = (obj) => ({ get: (k) => obj[k] ?? null });
   assert.deepEqual(readWorkspaceForm(form({ proposal: '2', action: 'retry-draft' })), { kind: 'retry-draft', proposalId: 2 });
   assert.deepEqual(readWorkspaceForm(form({ proposal: '2', action: 'answer', question_id: '5', answer: '   ' })), { kind: 'answer', proposalId: 2, questionId: 5, answer: null });

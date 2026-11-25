@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { appDatabase } from '../../../lib/app_db.ts';
-import { getProposal, MAX_ANSWER, MAX_QUESTION, unanswered } from '../../../lib/draft.ts';
+import { KIND_LABELS, proposalFlags } from '../../../lib/claimCheck.ts';
+import { getProposal, MAX_ANSWER, MAX_DRAFT, MAX_QUESTION, unanswered } from '../../../lib/draft.ts';
 import { getJob, type SavedJob } from '../../../lib/jobs.ts';
 import { getEntry } from '../../../lib/portfolio.ts';
 
@@ -23,6 +24,8 @@ const ERRORS: Record<string, string> = {
 const SAVED: Record<string, string> = {
   answer: 'Answer saved.',
   question: 'Question added.',
+  draft: 'Draft saved. The claim check found nothing unproven in it.',
+  'draft-flagged': 'Draft saved. The claim check flagged something in it: see below.',
 };
 const pick = (table: Record<string, string>, v: string | string[] | undefined) =>
   typeof v === 'string' && Object.hasOwn(table, v) ? table[v] : null;
@@ -43,6 +46,8 @@ export default async function ProposalPage({
   if (!proposal || !job) notFound();
   const evidence = proposal.evidenceIds.map((e) => getEntry(db, e)?.project ?? `entry ${e} (since removed)`);
   const open = proposal.questions.filter(unanswered).length;
+  // The claim check (lib/claimCheck.ts), worked out afresh on every visit.
+  const flags = proposalFlags(db, proposal.id);
   const done = pick(SAVED, saved);
   const problem = pick(ERRORS, error);
 
@@ -83,14 +88,54 @@ export default async function ProposalPage({
         </section>
 
         <section id="draft" style={column}>
-          <h2 style={{ marginTop: 0 }}>First draft</h2>
+          <h2 style={{ marginTop: 0 }}>The draft</h2>
           {proposal.draft !== null ? (
             <>
-              <pre style={prose}>{proposal.draft}</pre>
+              {flags.length > 0 ? (
+                <div
+                  id="claim-flags"
+                  role="alert"
+                  style={{ background: '#fdecec', border: '1px solid #d08080', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '0.75rem' }}
+                >
+                  <strong style={{ color: '#a40000' }} data-flag="blocks-approval">
+                    ⚑ Blocks approval: {flags.length} claim{flags.length === 1 ? '' : 's'} you cannot back up yet
+                  </strong>
+                  <ol style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem' }}>
+                    {flags.map((f, i) => (
+                      <li key={i} data-claim={f.kind} style={{ marginBottom: '0.5rem' }}>
+                        <strong>{KIND_LABELS[f.kind]}:</strong> “{f.sentence}”
+                        <div style={muted}>{f.why}</div>
+                      </li>
+                    ))}
+                  </ol>
+                  <p style={{ ...muted, marginBottom: 0 }}>Fix the sentence and save; the flag clears when the claim can be backed up.</p>
+                </div>
+              ) : (
+                <p id="claim-flags" role="status" style={muted}>
+                  Claim check: nothing unproven found (unfinished work shown as delivered, unapproved work, or a number with no
+                  source).
+                </p>
+              )}
+              <form method="post" action="/api/proposals">
+                <input type="hidden" name="proposal" value={String(proposal.id)} />
+                <input type="hidden" name="action" value="edit-draft" />
+                <textarea
+                  name="draft"
+                  aria-label="Draft proposal"
+                  rows={16}
+                  required
+                  maxLength={MAX_DRAFT}
+                  defaultValue={proposal.draft}
+                  style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                />
+                <button type="submit">Save draft</button>
+              </form>
               <hr />
               <p style={muted}>
-                Written by the AI {proposal.draftedAt ? `${when(proposal.draftedAt)} Mountain time` : null}, from the job
-                and only your portfolio entries approved for use:{' '}
+                {proposal.editedAt ? `Edited by you ${when(proposal.editedAt)} Mountain time. ` : null}
+                {proposal.editedAt ? 'First written' : 'Written'} by the AI{' '}
+                {proposal.draftedAt ? `${when(proposal.draftedAt)} Mountain time` : null}, from the job and only your
+                portfolio entries approved for use:{' '}
                 {evidence.length > 0 ? evidence.join('; ') : 'none were approved, so it cites no past work'}.
               </p>
             </>
