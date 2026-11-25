@@ -4,10 +4,13 @@ import { approvalState, fingerprintOf, reviewBlock } from '../../../../lib/appro
 import { KIND_LABELS } from '../../../../lib/claimCheck.ts';
 import { getProposal, unanswered } from '../../../../lib/draft.ts';
 import { getJob } from '../../../../lib/jobs.ts';
+import { copyText, latestSent } from '../../../../lib/sent.ts';
+import { CopyButton } from './copy_button.tsx';
 
 // The final review screen (task 3.3, hand-off §5D): exactly what Dane would
 // send, every screening answer, anything unresolved, and the one button that
-// approves this exact version. Read on every visit: approval is worked out
+// approves this exact version. Once approved, the Copy buttons and "I sent
+// it" (task 3.4, hand-off §13.11): Dane sends it in Upwork himself. Read on every visit: approval is worked out
 // afresh from what the proposal says now.
 export const dynamic = 'force-dynamic';
 
@@ -24,10 +27,15 @@ const ERRORS: Record<string, string> = {
   changed:
     'Nothing was approved: the proposal changed after this screen was opened, so the version you clicked on is not the one saved. Read it again below.',
   blocked: 'Nothing was approved: something below still blocks approval.',
+  'not-approved': 'Nothing was marked sent: this proposal is not approved right now, so there is no approved version to have sent.',
+  'changed-sent':
+    'Nothing was marked sent: the proposal changed after this screen was opened, so the version you clicked on is not the one approved now.',
 };
 const DONE: Record<string, string> = {
   approved: 'Approved. This exact version is the one you will send.',
   already: 'This exact version was already approved. Nothing changed.',
+  sent: 'Marked as sent by you. The app sent nothing; this records your word that you sent it in Upwork.',
+  'already-sent': 'You had already marked this version as sent. Nothing changed.',
 };
 const pick = (table: Record<string, string>, v: string | string[] | undefined) =>
   typeof v === 'string' && Object.hasOwn(table, v) ? table[v] : null;
@@ -52,6 +60,10 @@ export default async function ReviewPage({
   const ok = pick(DONE, done);
   const problem = pick(ERRORS, error);
   const workspace = `/proposals/${proposal.id}`;
+  // Offered only while this exact version is approved (lib/sent.ts).
+  const toCopy = copyText(db, proposal.id);
+  const sent = latestSent(db, proposal.id);
+  const sentThisVersion = sent !== undefined && state.state === 'approved' && sent.approvalId === state.approval.id;
 
   return (
     <main style={{ maxWidth: '48rem' }}>
@@ -98,6 +110,39 @@ export default async function ReviewPage({
           </p>
         )}
       </section>
+
+      {sent ? (
+        <p data-sent="by-dane" role="status" style={banner('#e8f0fb', '#7a9ccc')}>
+          <strong>Sent by Dane</strong> (you said so) {when(sent.confirmedAt)} Mountain time. The app sent nothing.
+          {sentThisVersion ? null : ' What you sent was an earlier approved version; the proposal has changed since.'}
+        </p>
+      ) : null}
+
+      {toCopy && state.state === 'approved' ? (
+        <section id="send" style={{ margin: '1rem 0', ...box }}>
+          <h2 style={{ marginTop: 0 }}>Send it yourself in Upwork</h2>
+          <p style={muted}>
+            Copy the text and each answer, paste them into the proposal on Upwork, send it there, then come back and press
+            “I sent it”.
+          </p>
+          <p>
+            <CopyButton text={toCopy.draft} label="the proposal text" />
+          </p>
+          {toCopy.answers.map((a, i) => (
+            <p key={i}>
+              <CopyButton text={a.answer} label={`answer ${i + 1}`} /> <span style={muted}>({a.question})</span>
+            </p>
+          ))}
+          {sentThisVersion ? null : (
+            <form method="post" action="/api/sent">
+              <input type="hidden" name="proposal" value={String(proposal.id)} />
+              <input type="hidden" name="action" value="sent" />
+              <input type="hidden" name="fingerprint" value={state.approval.fingerprint} />
+              <button type="submit">I sent it</button>
+            </form>
+          )}
+        </section>
+      ) : null}
 
       <section id="unresolved" style={{ margin: '1rem 0' }}>
         <h2>Unresolved</h2>
