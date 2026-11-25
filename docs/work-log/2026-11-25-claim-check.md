@@ -21,3 +21,13 @@ The check is a set of plain rules, not the AI, so a job post can't talk its
 way past it. It has known blind spots, written down in the code: it
 recognises projects by their name as written, and a number the job post
 itself mentions counts as sourced.
+
+**After review, round 1.** Review caught four ways the check read sentences
+wrongly, and they are fixed: invented figures written with a unit stuck on
+("10x faster", "8yrs", "1.5x") now get flagged instead of slipping through;
+honest sentences like "Booking Helper is being built" or "is not yet launched"
+no longer get flagged just because they contain the word "built" or
+"launched"; "I'm building" counts the same as "I am building"; and in "I
+delivered A and am building B", the word "delivered" now counts against A
+only. Dane's own answers to a job's screening questions also count as a
+source now, so "I can start in 2 days" is fine when he answered "2 days".

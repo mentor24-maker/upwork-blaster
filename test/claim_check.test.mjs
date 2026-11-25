@@ -11,7 +11,7 @@ import { openDatabase, runMigrations } from '../lib/db.ts';
 import { saveJob } from '../lib/jobs.ts';
 import { DEFAULT_SETTINGS, savePreferences } from '../lib/preferences.ts';
 import { addEntry, getEntry, updateEntry } from '../lib/portfolio.ts';
-import { DRAFT_MODEL, getProposal, openProposal, readWorkspaceForm, saveDraft, useDraftDepsForTests } from '../lib/draft.ts';
+import { answerQuestion, DRAFT_MODEL, getProposal, openProposal, readWorkspaceForm, saveDraft, useDraftDepsForTests } from '../lib/draft.ts';
 import { approvalBlock, checkClaims, numbersIn, proposalFlags, sentencesOf } from '../lib/claimCheck.ts';
 import { POST as postWorkspace } from '../app/api/proposals/route.ts';
 
@@ -102,6 +102,46 @@ test('a number with no source raises its flag; one from the post or an approved 
   assert.deepEqual(kinds('For your team of 25, within the $2000 budget, like Clinic Dashboard for 12 clinics.'), [], 'all three are sourced');
   assert.deepEqual(kinds('Revenue went up 300% for a client.'), ['invented-number'], 'an unapproved entry is no source');
   assert.deepEqual(kinds('Built on Next.js with S3, Web3 wallets and 3D charts: see https://example.test/a/2024/99.'), [], 'names and links are not figures');
+});
+
+test('review round 1: numbers with a unit glued on are numbers, and decimals stay whole', () => {
+  assert.deepEqual(numbersIn('10x faster over 8yrs, 3hrs, 50ms, 2 days, 10+ and 1.5x'), ['10', '8', '3', '50', '2', '10', '1.5']);
+  assert.deepEqual(numbersIn('5m and 5M and 2bn'), ['5000000', '5000000', '2000000000']);
+  assert.deepEqual(kinds('I made dashboards 10x faster over 8yrs.'), ['invented-number']);
+  assert.match(checkClaims('I made dashboards 10x faster over 8yrs.', SOURCES)[0].why, /The numbers 10, 8 appear nowhere/);
+  assert.deepEqual(kinds('Speeds went up 1.5x.'), ['invented-number'], 'not read as a bare 1 sourced by the "1." question');
+  assert.deepEqual(kinds('Load times dropped 50ms.'), ['invented-number']);
+});
+
+test('review round 1: a not-yet phrase wins over the done word inside it', () => {
+  assert.deepEqual(kinds('Booking Helper is being built now.'), []);
+  assert.deepEqual(kinds('Booking Helper is not yet launched.'), []);
+  assert.deepEqual(kinds('Booking Helper is not yet in production.'), []);
+  assert.deepEqual(kinds("Invoice Robot hasn't been deployed yet."), []);
+  assert.deepEqual(kinds('Booking Helper will be launched in spring.'), []);
+  assert.deepEqual(kinds('Booking Helper is being built, and I launched it last week.'), ['planned-as-delivered'], 'a real done word still counts');
+});
+
+test('review round 1: contractions say "building" as well as the words written out', () => {
+  assert.deepEqual(kinds("I'm building Booking Helper for this."), []);
+  assert.deepEqual(kinds('We’re developing Invoice Robot now.'), [], 'curly apostrophe too');
+  assert.deepEqual(kinds("It's being built: Booking Helper syncs calendars."), []);
+});
+
+test('review round 1: done and not-yet words are judged in the clause about each project', () => {
+  assert.deepEqual(kinds('I delivered Clinic Dashboard and am currently building Booking Helper.'), []);
+  assert.deepEqual(kinds("Booking Helper, which I'm building now, syncs calendars."), []);
+  assert.deepEqual(kinds('I delivered Booking Helper and Clinic Dashboard.'), ['planned-as-delivered']);
+  assert.deepEqual(kinds('I am building Booking Helper; Invoice Robot handles invoices.'), ['planned-as-delivered'], 'each project needs its own honest clause');
+});
+
+test("Dane's own screening answers are a source for numbers", async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel('I can start in 2 days.'));
+  assert.deepEqual(proposalFlags(db, p.id).map((f) => f.kind), ['invented-number']);
+  answerQuestion(db, p.id, p.questions[0].id, 'Within 2 days.');
+  assert.deepEqual(proposalFlags(db, p.id), []);
+  db.close();
 });
 
 test('the delivered, approved project may be cited as delivered', () => {
