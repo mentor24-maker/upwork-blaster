@@ -44,6 +44,8 @@ export const SYSTEM_PROMPT = [
   "Dane's own work you may mention is between <portfolio> and </portfolio>. It is the ONLY work you may mention.",
   '- Never invent a project, client, result, number, link or skill that is not written there.',
   '- Say each project is what its status says: never present an "in progress" or "planned" project as delivered.',
+  '- Name a project exactly as it is written after "Project:", so every claim can be checked against the portfolio.',
+  '- Use no number (years, counts, percentages, prices, dates) that is not written in the job post or the portfolio.',
   '- If nothing there fits the job, say what Dane would do, without claiming past work.',
   '',
   'Write plain text Dane can paste into Upwork: no markdown headings, no placeholders in brackets, no sign-off name.',
@@ -141,13 +143,15 @@ export type SavedProposal = {
   draft: string | null;
   draftProblem: string | null;
   draftedAt: string | null;
+  /** When Dane last saved his own edit of the draft; null while it is the AI's text as written. */
+  editedAt: string | null;
   /** The portfolio entries the AI was shown for this draft. */
   evidenceIds: number[];
   questions: SavedQuestion[];
   createdAt: string;
 };
 
-const SELECT = 'SELECT id, opportunity_id, draft, draft_problem, drafted_at, evidence_ids, created_at FROM proposal';
+const SELECT = 'SELECT id, opportunity_id, draft, draft_problem, drafted_at, edited_at, evidence_ids, created_at FROM proposal';
 
 function toProposal(db: DatabaseSync, row: Record<string, unknown>): SavedProposal {
   let evidenceIds: number[] = [];
@@ -164,6 +168,7 @@ function toProposal(db: DatabaseSync, row: Record<string, unknown>): SavedPropos
     draft: (row.draft as string | null) ?? null,
     draftProblem: (row.draft_problem as string | null) ?? null,
     draftedAt: (row.drafted_at as string | null) ?? null,
+    editedAt: (row.edited_at as string | null) ?? null,
     evidenceIds,
     questions: db
       .prepare('SELECT id, question, answer FROM proposal_question WHERE proposal_id = ? ORDER BY id')
@@ -277,9 +282,10 @@ const isId = (s: string) => /^\d{1,12}$/.test(s);
 export type WorkspaceAction =
   | { kind: 'answer'; proposalId: number; questionId: number; answer: string | null }
   | { kind: 'add-question'; proposalId: number; question: string }
-  | { kind: 'retry-draft'; proposalId: number };
+  | { kind: 'retry-draft'; proposalId: number }
+  | { kind: 'edit-draft'; proposalId: number; draft: string };
 
-/** The workspace form's fields checked, or null when they are not one of its three actions. */
+/** The workspace form's fields checked, or null when they are not one of its four actions. */
 export function readWorkspaceForm(form: FormLike): WorkspaceAction | null {
   const p = field(form, 'proposal');
   if (!isId(p)) return null;
@@ -297,7 +303,28 @@ export function readWorkspaceForm(form: FormLike): WorkspaceAction | null {
     return { kind: 'add-question', proposalId, question };
   }
   if (action === 'retry-draft') return { kind: 'retry-draft', proposalId };
+  if (action === 'edit-draft') {
+    const draft = field(form, 'draft').replace(/\r\n/g, '\n').trim();
+    if (!draft || draft.length > MAX_DRAFT) return null;
+    return { kind: 'edit-draft', proposalId, draft };
+  }
   return null;
+}
+
+/**
+ * Save Dane's own edit of the draft. The claim check (lib/claimCheck.ts) runs
+ * on the saved text every time the workspace is shown, so a save is checked
+ * at once. Saving never approves anything. False when there is no such proposal.
+ */
+export function saveDraft(db: DatabaseSync, proposalId: number, draft: string): boolean {
+  const res = db
+    .prepare(
+      `UPDATE proposal SET draft = ?, draft_problem = NULL,
+         edited_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ?`,
+    )
+    .run(draft, proposalId);
+  return Number(res.changes) === 1;
 }
 
 /** Save Dane's answer to one of a proposal's questions. False when there is no such question. */
