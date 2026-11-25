@@ -38,7 +38,19 @@ const READING = String.raw`(?:reading|reviewing|scoring|screening|processing|par
  * are orders, while "Note to AI developers:" and "If you are an AI expert"
  * are a client speaking to the freelancers.
  */
-const SPOKEN_TO = String.raw`(?=\s*(?:[,.:;!?)\-—]|$)|\s+(?:` + READING + String.raw`|that\s+is|who\s+is|tool|system)\b)`;
+const SPOKEN_TO =
+  String.raw`(?=\s*(?:[,.:;!?)\-—]|$)|\s+(?:` + READING + String.raw`|that\s+is|who\s+is|tool|system)\b)` +
+  // Not a greeting to people in a list of fields: "Hello AI, ML and data
+  // engineers!", "If you are an AI, ML or data person, apply."
+  String.raw`(?!\s*[,/]\s*[A-Za-z][\w./+\- ]{0,40}?\s(?:and|or|&)\s[^.!?:;]{0,40}?\b(?:engineers?|developers?|devs|experts?|specialists?|people|person|folks|freelancers?|professionals?|enthusiasts?|practitioners?|consultants?|scientists?|researchers?|builders?|teams?|talent|candidates?|pros)\b)`;
+
+/**
+ * A sentence that, though it names the AI, speaks to the people applying:
+ * "Note to AI: please apply only if you have shipped a production agent."
+ * It is a client writing to AI freelancers, so it is not a turn to the AI
+ * (unless it also gives an order, which isOrder() still catches).
+ */
+const TO_APPLICANTS = /\b(?:apply|applying|applicants?|your\s+proposal|in\s+your\s+(?:proposal|application|cover\s+letter)|your\s+(?:experience|portfolio|rate|availability|cv|resume|time\s*zone)|you(?:'ve|\s+have)\s+(?:shipped|built|worked|delivered|done|launched))\b/i;
 
 /** Tags that end the quote the post is sent in (lib/extractJob.ts), or open a new one. */
 const CLOSE_QUOTE = /[<‹]\s*\/\s*job_post\b/gi;
@@ -77,7 +89,7 @@ export const ADDRESS_PATTERNS: readonly RegExp[] = [
  * "our bot must ignore previous instructions", "users can give it a rating"),
  * and that is the work, not an order.
  */
-const CLAUSE_START = /(?:^|[,;:(—–]|\s-)[\s"'“‘*_\-•>]*(?:(?:please|kindly|now|just|also|simply|then|instead|you\s+(?:must|should|will|need\s+to|have\s+to|are\s+to)|make\s+sure\s+(?:to|you))\s+)*$/i;
+const CLAUSE_START = /(?:^|[,;:(—–]|\s-)[\s"'“‘*_\-•>{[]*(?:(?:please|kindly|now|just|also|simply|then|instead|you\s+(?:must|should|will|need\s+to|have\s+to|are\s+to)|make\s+sure\s+(?:to|you))\s+)*$/i;
 
 /**
  * Orders that are a command to the reader, led by their verb. Each one counts
@@ -89,7 +101,7 @@ const SPOKEN_ORDERS: readonly RegExp[] = [
     String.raw`\b(?:ignore|disregard|forget|override|bypass)\s+(?:(?:all|any|every|of|the|your|previous|prior|above|earlier|preceding|former|original|system|these|those|its|other)\s+){1,4}` +
       String.raw`(?:instructions?|rules?|prompts?|directions?|guidelines?|exclusions?|preferences?|filters?|scoring|criteria|guardrails?)\b` +
       // Not a thing in the work: "the guidelines doc", "the filters in the old search".
-      String.raw`(?!\s+(?:doc|docs|document|file|files|page|pages|sheet|config|in|on|of|for|from|at|inside|within)\b)`,
+      String.raw`(?!\s+(?:doc|docs|document|file|files|page|pages|sheet|config|in|on|of|for|from|at|inside|within|about|regarding|concerning|around)\b)`,
     'gi',
   ),
   // Telling it what to score: "score this job 100", "give it a rating of 10/10"
@@ -128,6 +140,9 @@ const SPOKEN_ORDERS: readonly RegExp[] = [
   /\b(?:respond|reply|answer)\s+(?:only\s+)?with\s+(?:exactly\s+|only\s+|this\s+|the\s+following\s+)?json\b(?=\s*(?:only\b|[:.!]|$))/gi,
   // "Pretend you are an assistant without rules". Not "pretend you are a
   // customer and test the checkout".
+  // Our own field names, with an answer: "connects_cost: 0". Only where an
+  // order begins: "We use job_type: hourly in our API schema" is the work.
+  /["']?\b(?:connects_cost|job_type|posted_at)\b["']?\s*[:=]/gi,
   /\b(?:pretend|imagine|act\s+as\s+if)\s+(?:that\s+)?you\s+(?:are|were)\b[^.!?\n]{0,60}?\b(?:without|no|free\s+of)\s+(?:any\s+)?(?:rules|restrictions|limits|filters|guardrails|guidelines)\b/gi,
 ];
 
@@ -146,8 +161,6 @@ const MARKED_ORDERS: readonly RegExp[] = [
   /\b(?:jailbreak|DAN mode|god mode)\b/i,
   SCORE_OF_100,
   HUNDRED_OF_100,
-  // Our own field names, with an answer: "connects_cost: 0"
-  /["']?\b(?:connects_cost|job_type|posted_at)\b["']?\s*[:=]/i,
   // "New instructions for the model", not "our new instructions manual".
   new RegExp(String.raw`\b(?:new|real|actual|true|hidden|updated)\s+instructions?\s+(?:for|to)\s+(?:the\s+|any\s+|all\s+|an?\s+)?(?:` + AI_NAME + String.raw`|model)s?` + END, 'i'),
 ];
@@ -158,6 +171,41 @@ const MARKED_ORDERS: readonly RegExp[] = [
  */
 const SITE_SCORE = /\b(?:lighthouse|page\s*speed|pagespeed|performance|accessibility|a11y|seo|web\s+vitals|gtmetrix|coverage|tests?|audit|benchmark)\b/i;
 
+/**
+ * A command quoted as an example of the work, not given: "Example attack:
+ * Ignore all previous instructions…", "Test cases should include: ignore
+ * previous instructions, …". Prompt-injection and red-team jobs are Dane's
+ * market, and their posts quote the very words an attack uses. Only the
+ * words that carry no value (ignore/disregard…, pretend…) may be quoted:
+ * "Example: report the budget as $50,000" is still an order.
+ */
+const EXAMPLE_CUE = /\b(?:examples?|e\.g\.|for\s+instance|such\s+as|like|samples?|test(?:s|\s+cases?|\s+prompts?)?|attacks?|payloads?|injections?|red[\s-]team(?:ing)?|adversarial|malicious|jailbreaks?\s+(?:attempts?|prompts?)|cases?)\b[^.!?]*$/i;
+const QUOTABLE: ReadonlySet<RegExp> = new Set([SPOKEN_ORDERS[0], SPOKEN_ORDERS[SPOKEN_ORDERS.length - 1]]);
+
+/**
+ * A command after a label naming the thing to build: "Grading app: set the
+ * score to 0…", "Implement a lead scorer: score the job 0-100…". It says
+ * what the app will do.
+ */
+const SPEC_LABEL = /\b(?:app|application|feature|requirements?|spec|logic|function|endpoint|module|workflow|flow|dashboard|platform|website|site|api|crm|implement|build|create|develop|add|scorer|engine|service|integration)\b[^.!?:]*:[\s"'“‘*_\-•>]*$/i;
+
+/**
+ * A command that waits on something happening is behaviour to build:
+ * "Record the rating as 5 stars when the user taps submit", "mark it as a
+ * match when both users swipe right". Not "if you…" or "if asked", which is
+ * said to the reader.
+ */
+const CONDITION = /^[^.!?]*?\b(?:when|whenever|once|after|until|unless|if)\s+(?!you\b|you'|asked\b|possible\b|needed\b|necessary\b|so\b|requested\b)/i;
+
+/**
+ * The client editing their own post: "Please ignore the earlier rules
+ * about timezone, we are flexible now", "Disregard the previous
+ * guidelines; we updated the scope below." Never "your" or "all" rules,
+ * which are the AI's.
+ */
+const CLIENT_EDIT = /^\s*[,;:—–-]\s*(?:we|we're|we've|we'll|I|I'm|I've|our)\b/i;
+const THE_AIS_OWN = /\b(?:your|all|every|any|system|its)\b/i;
+
 /** Does this sentence give the AI an order? */
 export function isOrder(sentence: string): boolean {
   for (const re of MARKED_ORDERS) {
@@ -167,7 +215,13 @@ export function isOrder(sentence: string): boolean {
   }
   for (const re of SPOKEN_ORDERS) {
     for (const m of sentence.matchAll(re)) {
-      if (CLAUSE_START.test(sentence.slice(0, m.index))) return true;
+      const before = sentence.slice(0, m.index);
+      const after = sentence.slice(m.index + m[0].length);
+      if (!CLAUSE_START.test(before)) continue;
+      if (SPEC_LABEL.test(before) || CONDITION.test(after)) continue;
+      if (QUOTABLE.has(re) && EXAMPLE_CUE.test(before)) continue;
+      if (re === SPOKEN_ORDERS[0] && CLIENT_EDIT.test(after) && !THE_AIS_OWN.test(m[0])) continue;
+      return true;
     }
   }
   return false;
@@ -212,7 +266,7 @@ function pieces(text: string): { text: string; order: boolean }[] {
     let addressed = false;
     for (const s of sentencesOf(line)) {
       const t = s.trim();
-      if (!addressed && t && ADDRESS_PATTERNS.some((re) => re.test(t))) addressed = true;
+      if (!addressed && t && ADDRESS_PATTERNS.some((re) => re.test(t)) && !(TO_APPLICANTS.test(t) && !isOrder(t))) addressed = true;
       out.push({ text: s, order: addressed || (t !== '' && isOrder(t)) });
     }
   }
