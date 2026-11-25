@@ -135,6 +135,29 @@ test('review round 1: done and not-yet words are judged in the clause about each
   assert.deepEqual(kinds('I am building Booking Helper; Invoice Robot handles invoices.'), ['planned-as-delivered'], 'each project needs its own honest clause');
 });
 
+test('review round 2: numbers written as words are numbers, and compare with digits', () => {
+  for (const s of [
+    'I have over ten years of experience building dashboards.',
+    'Clinic Dashboard is used by three hospitals.',
+    'I have a decade of experience.',
+    'Hundreds of clients trust my work.',
+  ]) {
+    assert.deepEqual(kinds(s), ['invented-number'], s);
+  }
+  assert.deepEqual(numbersIn('twenty-five people, two hundred and fifty users, a dozen apps, two decades'), ['25', '250', '12', '20']);
+  assert.deepEqual(numbersIn('One of my projects serves a client.'), [], 'a lone "one" or "a" is not a number');
+  assert.deepEqual(kinds('Your team of twenty-five people will love it.'), [], 'the post says 25, so the word form is sourced');
+  const fiveYears = { ...SOURCES, jobTexts: [...SOURCES.jobTexts, 'Must have 5 years of experience.'] };
+  assert.deepEqual(kinds('I have five years of experience.', fiveYears), [], 'the post asks for 5 years');
+  const wordSourced = { ...SOURCES, jobTexts: [...SOURCES.jobTexts, 'We have forty clinics.'] };
+  assert.deepEqual(kinds('It would cover all 40 clinics.', wordSourced), [], 'and a word in the post sources the digits');
+});
+
+test('review round 2: a hyphen may stand in for a space in a project name', () => {
+  assert.deepEqual(kinds('Booking-Helper is live.'), ['planned-as-delivered']);
+  assert.deepEqual(kinds('Booking-Helper is planned for spring.'), []);
+});
+
 test("Dane's own screening answers are a source for numbers", async () => {
   const db = freshDb();
   const p = await openProposal(db, addJob(db), fakeModel('I can start in 2 days.'));

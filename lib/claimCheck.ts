@@ -38,7 +38,10 @@
  * "120" anywhere in the draft); and a clause that names no project is read as
  * about the project named just before it, so "I'm building A, and I
  * delivered a similar tool" is flagged for A until it is reworded. A number Dane typed that is true but in no approved entry is
- * flagged until he adds it to one: that is the record that backs it.
+ * flagged until he adds it to one: that is the record that backs it. Numbers
+ * written as words are read ("ten years", "a decade", "hundreds of clients"),
+ * but a change told as a word with no number in it ("doubled sign-ups", "cut
+ * load times in half") is not caught.
  *
  * Nothing here imports Next.js, so the tests run it under `node --test`.
  */
@@ -99,11 +102,11 @@ const CLAUSE_BREAK = /[,;:()\u2013\u2014]|\s-\s|\b(?:and|but|while|whereas|altho
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** A pattern finding a project's name as whole words, any case, any spacing. */
+/** A pattern finding a project's name as whole words, any case, any spacing, a hyphen standing in for a space ("Booking-Helper"). */
 function namePattern(name: string): RegExp | null {
-  const words = name.trim().split(/\s+/).filter(Boolean);
+  const words = name.trim().split(/[\s\-\u2010\u2011]+/).filter(Boolean);
   if (words.join(' ').length < MIN_NAME) return null;
-  return new RegExp(`(?<![\\p{L}\\p{N}])${words.map(escape).join('\\s+')}(?![\\p{L}\\p{N}])`, 'iu');
+  return new RegExp(`(?<![\\p{L}\\p{N}])${words.map(escape).join('(?:\\s+|\\s*[-\\u2010\\u2011]\\s*)')}(?![\\p{L}\\p{N}])`, 'iu');
 }
 
 /** The draft cut into sentences: by line, then after . ! or ? followed by a space. */
@@ -137,6 +140,67 @@ export function numbersIn(text: string): string[] {
     if (unit === 'm' || unit === 'M') value *= 1_000_000;
     if (unit === 'b' || unit === 'B' || unit === 'bn') value *= 1_000_000_000;
     if (Number.isFinite(value)) out.push(String(value));
+  }
+  return [...out, ...wordNumbersIn(text)];
+}
+
+const SMALL_WORDS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+/** Words that multiply what comes before them ("two hundred", "a dozen", "three decades"); the plural alone means one of it ("hundreds" is 100). */
+const MULTIPLIERS: Record<string, number> = {
+  hundred: 100, hundreds: 100, dozen: 12, dozens: 12, decade: 10, decades: 10,
+};
+/** Words that close a group, so "two thousand five hundred" is 2500. */
+const SCALES: Record<string, number> = {
+  thousand: 1_000, thousands: 1_000, million: 1_000_000, millions: 1_000_000, billion: 1_000_000_000, billions: 1_000_000_000,
+};
+
+/**
+ * Numbers written as words, read as their value so they compare with digits:
+ * "ten years" is 10, "twenty-five" 25, "two hundred and fifty" 250, "a
+ * decade" 10, "a dozen" 12, "hundreds of clients" 100. A lone "one" or "a" is
+ * not a number ("one of my projects", "a client"): only "one" inside a bigger
+ * number ("one hundred", "twenty-one") counts.
+ */
+function wordNumbersIn(text: string): string[] {
+  const words = text.replace(URL_RE, ' ').toLowerCase().match(/[\p{L}]+|[^\p{L}\s]+/gu) ?? [];
+  const isNumberWord = (w: string) => w in SMALL_WORDS || w in MULTIPLIERS || w in SCALES;
+  const out: string[] = [];
+  let i = 0;
+  while (i < words.length) {
+    if (!isNumberWord(words[i])) { i++; continue; }
+    let total = 0;
+    let current = 0;
+    let seen = 0;
+    let started = false;
+    let lastSmall = 0;
+    for (; i < words.length; i++) {
+      const w = words[i];
+      if (w === '-' && started && words[i + 1] in SMALL_WORDS) continue; // "twenty-five"
+      if (w === 'and' && started && words[i + 1] in SMALL_WORDS && current >= 100) continue; // "two hundred and fifty"
+      if (w in SMALL_WORDS) {
+        // A second small word that does not join on ("five six") starts a new number.
+        if (started && lastSmall !== 0 && !(lastSmall >= 20 && lastSmall % 10 === 0 && SMALL_WORDS[w] < 10)) break;
+        current += SMALL_WORDS[w];
+        lastSmall = SMALL_WORDS[w];
+      } else if (w in MULTIPLIERS) {
+        current = (current || 1) * MULTIPLIERS[w];
+        lastSmall = 0;
+      } else if (w in SCALES) {
+        total += (current || 1) * SCALES[w];
+        current = 0;
+        lastSmall = 0;
+      } else break;
+      started = true;
+      seen++;
+    }
+    const value = total + current;
+    const lone = seen === 1 && value === 1;
+    if (!lone) out.push(String(value));
   }
   return out;
 }

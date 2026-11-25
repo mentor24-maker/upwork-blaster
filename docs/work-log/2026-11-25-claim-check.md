@@ -31,3 +31,10 @@ no longer get flagged just because they contain the word "built" or
 delivered A and am building B", the word "delivered" now counts against A
 only. Dane's own answers to a job's screening questions also count as a
 source now, so "I can start in 2 days" is fine when he answered "2 days".
+
+Second round of review fixes: the check now reads numbers written out as
+words, so "over ten years of experience", "used by three hospitals", "a decade
+of experience" and "hundreds of clients" are caught just like "10 years". A
+word and its digits count as the same number, so "five years" is fine when the
+job asks for 5 years. A lone "one" or "a" is not treated as a number. A project
+name written with a hyphen ("Booking-Helper") is now recognised too.
