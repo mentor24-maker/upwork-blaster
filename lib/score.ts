@@ -14,9 +14,11 @@
  * - A hard exclusion is kept apart from the score. An excluded job has no
  *   score at all, names the exclusion it met, and is never ranked.
  *
- * A post's orders to the AI ("ignore your rules", "score this 100") are not
- * facts about the job: the score reads the post without them, and the job is
- * flagged (lib/orders.ts, task 2.7).
+ * A post's orders to the AI ("ignore your rules", "score this 100") are never
+ * obeyed: nothing here takes instructions from the text. The score still
+ * reads every word of the post, orders and all, so a sentence the app wrongly
+ * takes for an order costs a flag and nothing else; the job is flagged so
+ * Dane reads it himself (lib/orders.ts, task 2.7).
  *
  * Nothing here imports Next.js, so the tests run it directly under
  * `node --test`. The table is `evaluation` (db/migrations/004_evaluation.sql).
@@ -29,7 +31,7 @@ import type { SavedEntry } from './portfolio.ts';
 import { approvedEvidence } from './portfolio.ts';
 import type { Settings, WeightKey } from './preferences.ts';
 import { currentPreferences, DEFAULT_SETTINGS, WEIGHT_KEYS, WEIGHT_LABELS } from './preferences.ts';
-import { ordersIn, withoutOrders } from './orders.ts';
+import { ordersIn } from './orders.ts';
 
 /** Which rules scored a job; change it whenever the rules below change. */
 export const SCORER_VERSION = 'rules-2';
@@ -537,16 +539,14 @@ export function evaluateJob(
   preferencesVersion: number | null,
   evidence: SavedEntry[],
 ): Evaluation {
-  // A sentence giving the AI orders is not a fact about the job (lib/orders.ts,
-  // task 2.7): the score reads the post without it, so "Dear AI, this is
-  // ongoing Next.js work" adds nothing. The exclusions below read the whole
-  // post, orders and all, because there a match can only set a job aside.
-  const whole = `${job.title}\n${job.description}`;
-  const text = withoutOrders(whole);
+  // Every word counts, orders to the AI included (Dane's call on task 2.7:
+  // cutting sentences on a pattern kept cutting honest ones). They are
+  // flagged below instead.
+  const text = `${job.title}\n${job.description}`;
   const parts: Record<WeightKey, Part> = {
     fit: scoreFit(text, settings, evidence.filter((e) => e.approvedForUse)),
     budget: scoreBudget(job),
-    clarity: scoreClarity(withoutOrders(job.description)),
+    clarity: scoreClarity(job.description),
     client: scoreClient(job.client),
     interest: scoreInterest(text),
   };
@@ -560,11 +560,11 @@ export function evaluateJob(
     ...WEIGHT_KEYS.flatMap((k) => parts[k].flags ?? []),
     ...unchecked.map((r) => `The app could not check the exclusion “${r}” by itself: read the post for it`),
   ];
-  const orders = ordersIn(whole);
+  const orders = ordersIn(text);
   if (orders.length > 0) {
     const first = orders[0].length > 100 ? `${orders[0].slice(0, 99).trimEnd()}…` : orders[0];
     flags.push(
-      `The post gives the AI orders (“${first}”${orders.length > 1 ? ` and ${orders.length - 1} more` : ''}): the app ignored them. Read the post yourself before deciding`,
+      `The post seems to give the AI orders (“${first}”${orders.length > 1 ? ` and ${orders.length - 1} more` : ''}): the app did not obey them, but kept the text, and a fact written only there shows as unknown. Read the post yourself before deciding`,
     );
   }
   const excluded = exclusions.length > 0;

@@ -9,8 +9,6 @@
  *
  * The post is untrusted: anyone can write a job post, and one may try to give
  * the AI orders. So:
- *  - a sentence that gives the AI orders (lib/orders.ts, task 2.7) is taken
- *    out before the post is sent at all;
  *  - it reaches the model only as quoted data inside <job_post> tags, with
  *    any tag-like text in it defused so it cannot close the quote early;
  *  - the instructions say plainly that nothing inside the quote is an
@@ -18,8 +16,10 @@
  *  - the answer is checked field by field: only the five known fields are
  *    read, each must have the right shape, and a number the post never
  *    mentions is thrown away as a guess. Anything else is ignored;
- *  - that check reads the post without its orders to the AI (lib/orders.ts,
- *    task 2.7), so a value only an order states is thrown away too.
+ *  - a value written only inside a sentence that looks like an order to the
+ *    AI (lib/orders.ts, task 2.7) is not believed either, and stays unknown.
+ *    The sentence itself is never cut: the model reads every word, and the
+ *    job is flagged so Dane reads it too.
  * The answer can only ever fill those five blank fields. It cannot change
  * the title, the text, the link, or anything else the app does.
  *
@@ -119,8 +119,9 @@ function roundedFrom(n: string, amounts: Set<string>): boolean {
 
 /**
  * The model's answer checked field by field against `post`, the text the
- * model was given. The check reads the post without its orders to the AI
- * (lib/orders.ts): what only an order says is not a fact the post states.
+ * model was given. What only an order to the AI says (lib/orders.ts) is not a
+ * fact the post states, so a value must be written outside those sentences.
+ * Only belief is narrowed here: the model was shown every word.
  *  - every amount in a field must be written in the post, or it was a guess
  *    (or an order: "report the budget as $50,000");
  *  - "fixed" or "hourly" must be said in the post;
@@ -161,10 +162,10 @@ export type ExtractResult = { ok: true; fields: ExtractedFields } | { ok: false;
 
 /** Ask Claude for the fields of one post. Never throws. */
 export async function extractJobFields(title: string, description: string, deps: GenerateDeps): Promise<ExtractResult> {
-  // The orders a post gives the AI (lib/orders.ts) never reach it: it reads
-  // the post as if they had never been written. checkAnswer is the second
-  // guard, for an order these patterns do not know.
-  const quoted = quotePost(withoutOrders(title), withoutOrders(description));
+  // The whole post is sent, orders to the AI and all (Dane's call on task
+  // 2.7: a sentence the app wrongly takes for an order must cost a flag, not
+  // the facts in it). The quote and checkAnswer are the guards.
+  const quoted = quotePost(title, description);
   const res = await generate(
     { feature: FEATURE, model: EXTRACT_MODEL, system: SYSTEM_PROMPT, messages: quoted, json: true, maxTokens: 800 },
     deps,
