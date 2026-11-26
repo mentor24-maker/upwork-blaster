@@ -115,6 +115,8 @@ export default async function ReviewPage({
         <p data-sent="by-dane" role="status" style={banner('#e8f0fb', '#7a9ccc')}>
           <strong>Sent by Dane</strong> (you said so) {when(sent.confirmedAt)} Mountain time. The app sent nothing.
           {sentThisVersion ? null : ' What you sent was an earlier approved version; the proposal has changed since.'}
+          {' '}
+          <a href={`/pipeline#job-${proposal.id}`}>Track it on the Pipeline</a>
         </p>
       ) : null}
 

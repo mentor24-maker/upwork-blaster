@@ -21,6 +21,9 @@ export default function HomePage() {
           <a href="/jobs/new">Add a job</a>
         </li>
         <li>
+          <a href="/pipeline">Pipeline</a>: the jobs you sent, through replied, interviewing, won or lost
+        </li>
+        <li>
           <a href="/preferences">Preferences</a>
         </li>
         <li>
