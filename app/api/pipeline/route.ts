@@ -21,8 +21,18 @@ export async function POST(request: Request): Promise<Response> {
   const action = readPipelineForm(form);
   if (!action) return redirect('/pipeline?error=bad-form', 303);
   const result = applyPipelineAction(appDatabase(), action);
-  const anchor = `#job-${action.proposalId}`;
-  if (!result.ok) return redirect(`/pipeline?error=${result.reason}${result.reason === 'empty' ? anchor : ''}`, 303);
-  const done = result.already ? 'already' : action.action === 'move' ? 'moved' : action.action === 'note' ? 'noted' : 'next';
-  return redirect(`/pipeline?done=${done}${anchor}`, 303);
+  // The message shows inside the job's own card (the page reads `job`), and
+  // the anchor scrolls to it, so he sees what happened where he clicked.
+  const here = `&job=${action.proposalId}#job-${action.proposalId}`;
+  if (!result.ok) return redirect(`/pipeline?error=${result.reason}${result.reason === 'empty' ? here : ''}`, 303);
+  const done = result.already
+    ? 'already'
+    : action.action === 'move'
+      ? 'moved'
+      : action.action === 'note'
+        ? 'noted'
+        : result.card.nextAction === null
+          ? 'cleared'
+          : 'next';
+  return redirect(`/pipeline?done=${done}${here}`, 303);
 }

@@ -30,14 +30,31 @@ const DONE: Record<string, string> = {
   already: 'It was already in that column. Nothing changed.',
   noted: 'Note added.',
   next: 'Next action saved.',
+  cleared: 'Next action cleared.',
 };
 const pick = (table: Record<string, string>, v: string | string[] | undefined) =>
   typeof v === 'string' && Object.hasOwn(table, v) ? table[v] : null;
 
-function Card({ c }: { c: PipelineCard }) {
+type Notice = { ok: string | null; problem: string | null };
+
+function Message({ ok, problem }: Notice) {
+  return (
+    <>
+      {ok ? <p role="status">{ok}</p> : null}
+      {problem ? (
+        <p role="alert" style={{ color: '#a40000' }}>
+          {problem}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+function Card({ c, notice }: { c: PipelineCard; notice: Notice | null }) {
   const id = String(c.proposalId);
   return (
     <article id={`job-${id}`} data-pipeline-card={id} data-status={c.status} style={card}>
+      {notice ? <Message {...notice} /> : null}
       <strong style={{ overflowWrap: 'anywhere' }}>{c.title}</strong>
       <div style={muted}>
         Sent by you {when(c.sentAt)} MT
@@ -111,12 +128,15 @@ function Card({ c }: { c: PipelineCard }) {
 export default async function PipelinePage({
   searchParams,
 }: {
-  searchParams: Promise<{ done?: string | string[]; error?: string | string[] }>;
+  searchParams: Promise<{ done?: string | string[]; error?: string | string[]; job?: string | string[] }>;
 }) {
-  const { done, error } = await searchParams;
+  const { done, error, job } = await searchParams;
   const board = buildPipeline(appDatabase());
-  const ok = pick(DONE, done);
-  const problem = pick(ERRORS, error);
+  const notice: Notice = { ok: pick(DONE, done), problem: pick(ERRORS, error) };
+  // A message about one job shows in that job's card, where he clicked; one
+  // about no job on the board (or none named) shows at the top.
+  const jobId = typeof job === 'string' && /^\d{1,12}$/.test(job) ? Number(job) : null;
+  const onBoard = jobId !== null && board.columns.some((col) => col.cards.some((c) => c.proposalId === jobId));
 
   return (
     <main>
@@ -128,12 +148,7 @@ export default async function PipelinePage({
         Every job you marked “I sent it”. You set each status yourself: the app has no connection to Upwork and never
         guesses.
       </p>
-      {ok ? <p role="status">{ok}</p> : null}
-      {problem ? (
-        <p role="alert" style={{ color: '#a40000' }}>
-          {problem}
-        </p>
-      ) : null}
+      {onBoard ? null : <Message {...notice} />}
       {board.total === 0 ? (
         <p data-pipeline="empty">
           Nothing here yet. When you send an approved proposal in Upwork and press “I sent it” on its review screen, the job
@@ -157,7 +172,9 @@ export default async function PipelinePage({
               <h2 style={{ fontSize: '1.05em', margin: '0.25rem 0 0.6rem' }}>
                 {col.label} <span style={muted}>({col.cards.length})</span>
               </h2>
-              {col.cards.length === 0 ? <p style={muted}>None.</p> : col.cards.map((c) => <Card key={c.proposalId} c={c} />)}
+              {col.cards.length === 0 ? <p style={muted}>None.</p> : col.cards.map((c) => (
+                    <Card key={c.proposalId} c={c} notice={onBoard && c.proposalId === jobId ? notice : null} />
+                  ))}
             </section>
           ))}
         </div>

@@ -14,3 +14,12 @@ Why it matters: this is the last step of the first version's main flow:
 find a job, draft, approve, send it himself, and now follow it to a win or a
 loss. Every move is kept, not overwritten, so the history can later feed the
 simple outcome numbers (task 6.4) without guessing.
+
+**After review sent it back:** each save on the board (a move, a note, a next
+action) is now all-or-nothing. Before, if the app's check after saving found
+something wrong, it told Dane the save failed but kept the bad save anyway.
+Now a failed check undoes it, the same way every other save in the app
+works. The cause found in review is fixed too: long text was trimmed in a way
+that could cut an emoji in half; it now trims on whole characters. The
+"Moved." or "Note added." message now shows inside the job's own card, where
+he clicked, and clearing a next action says "Next action cleared."

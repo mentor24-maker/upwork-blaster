@@ -17,6 +17,8 @@ import { markSent } from '../lib/sent.ts';
 import {
   addNote,
   buildPipeline,
+  cutToChars,
+  MAX_NEXT_ACTION,
   MAX_NOTE,
   moveJob,
   pipelineCard,
@@ -159,6 +161,67 @@ test('the board stays the same after the database is closed and opened again (a 
   }
 });
 
+// ── Long text is cut on whole characters; a failed save leaves nothing ───
+
+test('a cut at each limit never splits an emoji in half', async () => {
+  const db = freshDb();
+  const p = await sentProposal(db);
+  const emoji = '\u{1F600}';
+  assert.equal(cutToChars(`ab${emoji}`, 3), `ab${emoji}`);
+  assert.equal(cutToChars(`ab${emoji}c`, 3), `ab${emoji}`);
+  assert.equal(cutToChars('abc', 5), 'abc');
+
+  const nextFits = 'a'.repeat(MAX_NEXT_ACTION - 1) + emoji;
+  assert.equal(setNextAction(db, p.id, nextFits).card.nextAction, nextFits, 'the emoji right at the limit is kept whole');
+  assert.equal(setNextAction(db, p.id, 'a'.repeat(MAX_NEXT_ACTION) + emoji).card.nextAction, 'a'.repeat(MAX_NEXT_ACTION), 'one past it is dropped whole');
+
+  const noteFits = 'n'.repeat(MAX_NOTE - 1) + emoji;
+  assert.equal(addNote(db, p.id, noteFits + 'tail').card.notes[0].note, noteFits);
+  assert.equal(addNote(db, p.id, 'n'.repeat(MAX_NOTE) + emoji).card.notes[0].note, 'n'.repeat(MAX_NOTE));
+  for (const row of db.prepare('SELECT note AS t FROM pipeline_note UNION ALL SELECT next_action FROM pipeline_next_action').all()) {
+    assert.doesNotMatch(String(row.t), /�/, 'no broken character stored');
+  }
+});
+
+/** The database, except that once a write has run, the read-back query matching `pattern` fails. */
+function failingReadBack(db, pattern) {
+  let wrote = false;
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop !== 'prepare') {
+        const v = target[prop];
+        return typeof v === 'function' ? v.bind(target) : v;
+      }
+      return (sql) => {
+        const stmt = target.prepare(sql);
+        if (/^\s*INSERT/i.test(sql)) {
+          return { run: (...a) => { const r = stmt.run(...a); wrote = true; return r; } };
+        }
+        if (wrote && pattern.test(sql)) {
+          return { get: () => { throw new Error('made-up read-back failure'); }, all: () => { throw new Error('made-up read-back failure'); } };
+        }
+        return stmt;
+      };
+    },
+  });
+}
+
+test('a save whose read-back fails is undone, for a move, a note and a next action', async () => {
+  const db = freshDb();
+  const p = await sentProposal(db);
+  const count = (table) => db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c;
+
+  assert.throws(() => moveJob(failingReadBack(db, /FROM pipeline_move/), p.id, 'won'), /made-up read-back failure/);
+  assert.equal(count('pipeline_move'), 0, 'the move was rolled back');
+  assert.throws(() => addNote(failingReadBack(db, /FROM pipeline_note/), p.id, 'A note'), /made-up read-back failure/);
+  assert.equal(count('pipeline_note'), 0, 'the note was rolled back');
+  assert.throws(() => setNextAction(failingReadBack(db, /FROM pipeline_next_action/), p.id, 'Call'), /made-up read-back failure/);
+  assert.equal(count('pipeline_next_action'), 0, 'the next action was rolled back');
+
+  assert.equal(db.isTransaction, false, 'no transaction left open');
+  assert.equal(moveJob(db, p.id, 'won').card.status, 'won', 'and the board still works afterwards');
+});
+
 // ── The form ──────────────────────────────────────────────────────────────
 
 test('the board form reads only its three actions on a proposal id', () => {
@@ -203,11 +266,12 @@ test('only a signed-in click changes the board: the route refuses without the si
 
     const cookie = `${SESSION_COOKIE}=${createSessionToken({ password: process.env.APP_PASSWORD, secret: process.env.APP_SESSION_SECRET })}`;
     const loc = async (obj) => (await postPipeline(request(obj, cookie))).headers.get('location');
-    assert.equal(await loc(move), `/pipeline?done=moved#job-${p.id}`);
-    assert.equal(await loc(move), `/pipeline?done=already#job-${p.id}`);
-    assert.equal(await loc({ proposal: String(p.id), action: 'note', text: 'They asked for a call.' }), `/pipeline?done=noted#job-${p.id}`);
-    assert.equal(await loc({ proposal: String(p.id), action: 'note', text: '  ' }), `/pipeline?error=empty#job-${p.id}`);
-    assert.equal(await loc({ proposal: String(p.id), action: 'next', text: 'Call Tuesday 10am' }), `/pipeline?done=next#job-${p.id}`);
+    assert.equal(await loc(move), `/pipeline?done=moved&job=${p.id}#job-${p.id}`);
+    assert.equal(await loc(move), `/pipeline?done=already&job=${p.id}#job-${p.id}`);
+    assert.equal(await loc({ proposal: String(p.id), action: 'note', text: 'They asked for a call.' }), `/pipeline?done=noted&job=${p.id}#job-${p.id}`);
+    assert.equal(await loc({ proposal: String(p.id), action: 'note', text: '  ' }), `/pipeline?error=empty&job=${p.id}#job-${p.id}`);
+    assert.equal(await loc({ proposal: String(p.id), action: 'next', text: '  ' }), `/pipeline?done=cleared&job=${p.id}#job-${p.id}`);
+    assert.equal(await loc({ proposal: String(p.id), action: 'next', text: 'Call Tuesday 10am' }), `/pipeline?done=next&job=${p.id}#job-${p.id}`);
     assert.equal(await loc({ ...move, proposal: String(notSent.id) }), '/pipeline?error=not-sent');
     assert.equal(await loc({ ...move, status: 'hired' }), '/pipeline?error=bad-form');
 

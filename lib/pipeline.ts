@@ -16,6 +16,7 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite';
+import { latestSent } from './sent.ts';
 
 export const PIPELINE_STATUSES = ['sent', 'replied', 'interviewing', 'won', 'lost'] as const;
 export type PipelineStatus = (typeof PIPELINE_STATUSES)[number];
@@ -55,8 +56,33 @@ export type PipelineCard = {
 export type PipelineBoard = { columns: { status: PipelineStatus; label: string; cards: PipelineCard[] }[]; total: number };
 
 /** True when he has marked this proposal sent: only then is it on the board. */
-function isOnBoard(db: DatabaseSync, proposalId: number): boolean {
-  return db.prepare('SELECT 1 FROM sent_record WHERE proposal_id = ? LIMIT 1').get(proposalId) !== undefined;
+const isOnBoard = (db: DatabaseSync, proposalId: number): boolean => latestSent(db, proposalId) !== undefined;
+
+/**
+ * Cut text to at most `max` whole characters. A plain `.slice` counts UTF-16
+ * halves and can split an emoji in two, which the database stores as a broken
+ * character; this never does.
+ */
+export function cutToChars(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length <= max ? text : chars.slice(0, max).join('');
+}
+
+/**
+ * Run one check-write-read-back as a single transaction, the way every other
+ * writer in lib/ does (lib/sent.ts markSent): a read-back that fails undoes
+ * the write, and two quick clicks cannot both pass the same check.
+ */
+function inTransaction<T>(db: DatabaseSync, work: () => T): T {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = work();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 /** One job's card, or undefined when the proposal was never marked sent. */
@@ -116,6 +142,10 @@ export type PipelineResult =
 /** Move a sent job to a status he picked. Moving it to the status it is already in changes nothing. */
 export function moveJob(db: DatabaseSync, proposalId: number, status: PipelineStatus): PipelineResult {
   if (!isPipelineStatus(status)) throw new Error(`not a pipeline status: ${String(status)}`);
+  return inTransaction(db, () => moveJobInside(db, proposalId, status));
+}
+
+function moveJobInside(db: DatabaseSync, proposalId: number, status: PipelineStatus): PipelineResult {
   if (!isOnBoard(db, proposalId)) return { ok: false, reason: 'not-sent' };
   const before = pipelineCard(db, proposalId);
   if (before?.status === status) return { ok: true, card: before, already: true };
@@ -125,10 +155,14 @@ export function moveJob(db: DatabaseSync, proposalId: number, status: PipelineSt
   return { ok: true, card };
 }
 
-/** Add one note in his words. A blank note is refused; a long one is cut to MAX_NOTE. */
+/** Add one note in his words. A blank note is refused; a long one is cut to MAX_NOTE whole characters. */
 export function addNote(db: DatabaseSync, proposalId: number, note: string): PipelineResult {
-  const text = note.replace(/\r\n/g, '\n').trim().slice(0, MAX_NOTE);
+  const text = cutToChars(note.replace(/\r\n/g, '\n').trim(), MAX_NOTE);
   if (!text) return { ok: false, reason: 'empty' };
+  return inTransaction(db, () => addNoteInside(db, proposalId, text));
+}
+
+function addNoteInside(db: DatabaseSync, proposalId: number, text: string): PipelineResult {
   if (!isOnBoard(db, proposalId)) return { ok: false, reason: 'not-sent' };
   const id = Number(db.prepare('INSERT INTO pipeline_note (proposal_id, note) VALUES (?, ?)').run(proposalId, text).lastInsertRowid);
   const card = pipelineCard(db, proposalId);
@@ -140,7 +174,11 @@ export function addNote(db: DatabaseSync, proposalId: number, note: string): Pip
 
 /** Set (or, when blank, clear) the job's one next action. */
 export function setNextAction(db: DatabaseSync, proposalId: number, nextAction: string): PipelineResult {
-  const text = nextAction.trim().replace(/\s+/g, ' ').slice(0, MAX_NEXT_ACTION) || null;
+  const text = cutToChars(nextAction.trim().replace(/\s+/g, ' '), MAX_NEXT_ACTION) || null;
+  return inTransaction(db, () => setNextActionInside(db, proposalId, text));
+}
+
+function setNextActionInside(db: DatabaseSync, proposalId: number, text: string | null): PipelineResult {
   if (!isOnBoard(db, proposalId)) return { ok: false, reason: 'not-sent' };
   db.prepare(
     `INSERT INTO pipeline_next_action (proposal_id, next_action) VALUES (?, ?)
