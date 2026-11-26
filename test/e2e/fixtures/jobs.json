@@ -1,0 +1,26 @@
+{
+  "_note": "Made-up job posts for the end-to-end test. No real client wrote any of this.",
+  "jobs": [
+    {
+      "key": "strong",
+      "url": "https://www.upwork.com/jobs/~01e2e000000000aaaa",
+      "title": "Made-up sales dashboard for a bakery chain",
+      "description": "We need a sales dashboard in Next.js and TypeScript that shows each shop's daily sales.\n\nFixed price, budget $3,000. Payment verified.\n\nScreening questions:\n1. How soon can you start?",
+      "aiAnswer": { "budget": "$3,000", "job_type": "fixed", "client": null, "posted_at": null, "connects_cost": null }
+    },
+    {
+      "key": "weak",
+      "url": "https://www.upwork.com/jobs/~01e2e000000000bbbb",
+      "title": "Made-up quick theme tweak",
+      "description": "Change the colours on our WordPress theme. Hourly, about an hour of work.",
+      "aiAnswer": { "budget": null, "job_type": "hourly", "client": null, "posted_at": null, "connects_cost": null }
+    },
+    {
+      "key": "excluded",
+      "url": "https://www.upwork.com/jobs/~01e2e000000000cccc",
+      "title": "Made-up gambling dashboard",
+      "description": "We need a dashboard in Next.js for our online casino. Fixed price, budget $5,000.",
+      "aiAnswer": { "budget": "$5,000", "job_type": "fixed", "client": null, "posted_at": null, "connects_cost": null }
+    }
+  ]
+}

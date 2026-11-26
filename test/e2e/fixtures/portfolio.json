@@ -1,0 +1,19 @@
+{
+  "_note": "Made-up portfolio entries for the end-to-end test. None of these projects is real.",
+  "entries": [
+    {
+      "project": "Made-up Shop Sales Dashboard",
+      "status": "delivered",
+      "features": "sales dashboard, daily sales per shop, Next.js, TypeScript",
+      "links": "https://example.com/made-up-shop-dashboard",
+      "approvedForUse": true
+    },
+    {
+      "project": "Made-up Booking Tool",
+      "status": "planned",
+      "features": "A booking tool, not started.",
+      "links": "",
+      "approvedForUse": false
+    }
+  ]
+}
