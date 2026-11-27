@@ -5,6 +5,9 @@ import { appDatabase } from '../../../lib/app_db.ts';
 import { redirect } from '../../../lib/gate.ts';
 import { createSessionToken, passwordMatches, readAuthConfig, sessionCookieHeader } from '../../../lib/session.ts';
 
+const REFUSED = (times: number) =>
+  times === 1 ? 'A sign-in with the wrong password was refused.' : `${times} sign-ins in a row with the wrong password were refused.`;
+
 export async function POST(request: Request): Promise<Response> {
   const config = readAuthConfig();
   if (!config) return redirect('/sign-in?error=not-set-up', 303);
@@ -18,7 +21,9 @@ export async function POST(request: Request): Promise<Response> {
   }
   if (!passwordMatches(given, config.password)) {
     // The wording is fixed: never the password typed, never the cookie.
-    logActivityOpening(appDatabase, { actor: 'app', kind: 'sign-in-refused', summary: 'A sign-in with the wrong password was refused.' });
+    // Refusals in a row share one counted line, so a stranger guessing
+    // passwords cannot push Dane's real history off the Activity page.
+    logActivityOpening(appDatabase, { actor: 'app', kind: 'sign-in-refused', summary: REFUSED(1) }, REFUSED);
     return redirect('/sign-in?error=wrong', 303);
   }
 

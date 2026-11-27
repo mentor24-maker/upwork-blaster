@@ -13,3 +13,11 @@ line is checked before it is saved, and anything that looks like the app
 password, the session key, the AI key or a sign-in cookie is replaced with
 "[hidden]". The full end-to-end test now fails if any step stops leaving its
 line, or if a secret ever shows up in the log.
+
+After review: secrets are now hidden *before* a job title or project name is
+cut short, so a password sitting right at the cut can no longer leak half of
+itself. Wrong-password sign-ins in a row now share one counted line ("50
+sign-ins in a row with the wrong password were refused"), so a stranger
+guessing passwords cannot bury Dane's real history. Copy only accepts real
+answer numbers, portfolio names are cut cleanly with "…", and opening a
+proposal writes its line only after the save is final.

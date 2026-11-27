@@ -16,8 +16,11 @@ import {
   listActivity,
   logActivity,
   MAX_SUMMARY,
+  MAX_TITLE,
+  quotedName,
   scrubSecrets,
 } from '../lib/activity.ts';
+import { addEntry } from '../lib/portfolio.ts';
 import { saveJob } from '../lib/jobs.ts';
 import { recordDecision } from '../lib/inbox.ts';
 import { createSessionToken, SESSION_COOKIE } from '../lib/session.ts';
@@ -83,6 +86,35 @@ test('a job whose title holds a secret is logged with it hidden', async () => {
     const all = JSON.stringify(db.prepare('SELECT * FROM activity_event').all());
     for (const s of [PASSWORD, SECRET, KEY]) assert.ok(!all.includes(s), s);
     assert.match(listActivity(db)[0].summary, /^You saved the job “Dashboard \[hidden\] \[hidden\] \[hidden\]”\.$/);
+  });
+});
+
+test('a secret is hidden before a name is cut short, even across the cut or with spaces inside it', async () => {
+  const across = 'hunter2-long-secret';
+  // The password starts at character 112 of a title cut at 120.
+  assert.ok(!quotedName(`${'x'.repeat(110)} ${across}`, { APP_PASSWORD: across }).includes('hunter2'), 'no part of it is left');
+  assert.equal(quotedName(`${'x'.repeat(110)} ${across}`, { APP_PASSWORD: across }), `“${'x'.repeat(110)} ${HIDDEN}”`);
+  const spaced = 'made-up  two\nline pass';
+  const out = quotedName(`Job ${spaced} here`, { APP_PASSWORD: spaced });
+  assert.equal(out, `“Job ${HIDDEN} here”`, 'a double space or line break inside the secret does not let it through');
+  assert.ok(!/made-up|line pass/.test(out));
+  assert.equal(Array.from(quotedName('😀'.repeat(MAX_TITLE + 5), {})).length, MAX_TITLE + 2, 'cut on whole characters, quotes added');
+
+  await withEnv({ APP_PASSWORD: across }, () => {
+    const db = freshDb();
+    assert.ok(saveJob(db, job({ title: `${'x'.repeat(110)} ${across}` })).ok);
+    assert.ok(!JSON.stringify(db.prepare('SELECT * FROM activity_event').all()).includes('hunter2'));
+  });
+});
+
+test('a portfolio name is cut on whole characters with "…", its secrets hidden first', async () => {
+  await withEnv({ APP_PASSWORD: 'hunter2-long-secret' }, () => {
+    const db = freshDb();
+    addEntry(db, { project: `${'😀'.repeat(115)} hunter2-long-secret`, status: 'delivered', features: '', links: [], approvedForUse: false });
+    const line = listActivity(db)[0].summary;
+    assert.ok(!line.includes('hunter2'), line);
+    assert.ok(line.isWellFormed(), 'no emoji split in half');
+    assert.match(line, /…” to your portfolio\.$/);
   });
 });
 
@@ -158,6 +190,39 @@ test('signing in logs "You signed in", a wrong password logs a refusal, and neit
   }
 });
 
+test('wrong passwords in a row share one counted line, so they cannot push real history off the page', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ub-activity-test-'));
+  try {
+    const setup = openDatabase(join(dir, 'app.sqlite'));
+    runMigrations(setup);
+    setup.close();
+    const env = { APP_PASSWORD: PASSWORD, APP_SESSION_SECRET: SECRET, UB_DATA_DIR: dir };
+    const post = (password) => {
+      const body = new FormData();
+      body.set('password', password);
+      return signIn(new Request('http://mac-mini.local:4280/api/sign-in', { method: 'POST', body }));
+    };
+    await withEnv(env, async () => {
+      for (let i = 0; i < 50; i++) await post(`made-up-guess-${i}`);
+      await post(PASSWORD);
+      await post('made-up-guess-again');
+    });
+    const db = openDatabase(join(dir, 'app.sqlite'));
+    assert.deepEqual(
+      listActivity(db).map((e) => [e.actor, e.summary]),
+      [
+        ['app', 'A sign-in with the wrong password was refused.'],
+        ['Dane', 'You signed in.'],
+        ['app', '50 sign-ins in a row with the wrong password were refused.'],
+      ],
+      'fifty guesses are one line; his sign-in starts a fresh one',
+    );
+    db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the copy note is refused signed out, on a bad form and on a proposal not approved, and writes nothing then', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ub-activity-test-'));
   try {
@@ -180,9 +245,11 @@ test('the copy note is refused signed out, on a bad form and on a proposal not a
       (await post({ proposal: String(proposal), part: 'text' }, false)).status,
       (await post({ proposal: 'x', part: 'text' })).status,
       (await post({ proposal: String(proposal), part: 'everything' })).status,
+      (await post({ proposal: String(proposal), part: 'answer-0' })).status,
+      (await post({ proposal: String(proposal), part: 'answer-01' })).status,
       (await post({ proposal: String(proposal), part: 'text' })).status,
     ]);
-    assert.deepEqual(statuses, [401, 400, 400, 404], 'signed out, bad id, bad part, not approved');
+    assert.deepEqual(statuses, [401, 400, 400, 400, 400, 404], 'signed out, bad id, bad part, answer 0, answer 01, not approved');
     const db = openDatabase(join(dir, 'app.sqlite'));
     assert.equal(listActivity(db).length, before, 'no line was written');
     db.close();

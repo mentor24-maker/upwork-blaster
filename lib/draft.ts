@@ -257,6 +257,7 @@ export async function openProposal(db: DatabaseSync, opportunityId: number, ai?:
   if (!job) return undefined;
   let proposal = proposalForJob(db, opportunityId);
   if (!proposal) {
+    let opened: { id: number; questions: number } | null = null;
     db.exec('BEGIN IMMEDIATE');
     try {
       const res = db.prepare('INSERT OR IGNORE INTO proposal (opportunity_id) VALUES (?)').run(opportunityId);
@@ -265,13 +266,18 @@ export async function openProposal(db: DatabaseSync, opportunityId: number, ai?:
         const add = db.prepare('INSERT INTO proposal_question (proposal_id, question) VALUES (?, ?)');
         const questions = screeningQuestionsIn(job.description);
         for (const q of questions) add.run(id, q);
-        const found = questions.length === 0 ? '' : ` with the ${questions.length} screening question${questions.length === 1 ? '' : 's'} from the post`;
-        logProposalActivity(db, id, 'Dane', 'proposal-opened', (name) => `You opened a proposal for ${name}${found}.`);
+        opened = { id, questions: questions.length };
       }
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');
       throw err;
+    }
+    // Written after COMMIT, so a log line that fails can never undo the save.
+    if (opened) {
+      const n = opened.questions;
+      const found = n === 0 ? '' : ` with the ${n} screening question${n === 1 ? '' : 's'} from the post`;
+      logProposalActivity(db, opened.id, 'Dane', 'proposal-opened', (name) => `You opened a proposal for ${name}${found}.`);
     }
     proposal = proposalForJob(db, opportunityId);
     if (!proposal) throw new Error(`the proposal for job ${opportunityId} did not read back after saving`);

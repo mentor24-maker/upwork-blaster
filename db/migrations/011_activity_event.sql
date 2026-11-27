@@ -1,6 +1,9 @@
 -- The activity log (lib/activity.ts, the /activity page): one plain-English
 -- line for each thing Dane or the AI did, so he can look back and see what
--- happened and who did it. A row is never edited or deleted.
+-- happened and who did it. A row is never deleted, and only one kind is
+-- ever changed: a refused sign-in right after another is counted on the same
+-- row (`times` goes up, `at` becomes the latest), so a stranger guessing
+-- passwords cannot push Dane's real history off the page.
 --
 -- `actor` says who did it: 'Dane' for his clicks, 'AI' for what the model
 -- wrote, 'app' for what the app worked out by its own rules (a job's score).
@@ -14,5 +17,6 @@ CREATE TABLE activity_event (
   kind            TEXT    NOT NULL CHECK (length(kind) BETWEEN 1 AND 40),
   summary         TEXT    NOT NULL CHECK (length(trim(summary)) BETWEEN 1 AND 500),
   opportunity_id  INTEGER REFERENCES opportunity (id),
-  proposal_id     INTEGER REFERENCES proposal (id)
+  proposal_id     INTEGER REFERENCES proposal (id),
+  times           INTEGER NOT NULL DEFAULT 1 CHECK (times >= 1)
 );

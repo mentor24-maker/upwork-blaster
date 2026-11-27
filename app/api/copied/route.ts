@@ -21,7 +21,7 @@ export async function POST(request: Request): Promise<Response> {
   const p = form.get('proposal');
   const part = form.get('part');
   if (typeof p !== 'string' || !/^\d{1,12}$/.test(p)) return done(400);
-  if (typeof part !== 'string' || !/^(text|answer-\d{1,2})$/.test(part)) return done(400);
+  if (typeof part !== 'string' || !/^(text|answer-[1-9]\d?)$/.test(part)) return done(400);
   const db = appDatabase();
   const copied = copyText(db, Number(p));
   if (!copied) return done(404);

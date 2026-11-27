@@ -14,7 +14,7 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite';
-import { logActivity, MAX_TITLE } from './activity.ts';
+import { logActivity, quotedName } from './activity.ts';
 
 /** The three statuses, in the order the form offers them. */
 export const STATUSES = ['delivered', 'in progress', 'planned'] as const;
@@ -114,7 +114,7 @@ export function addEntry(db: DatabaseSync, entry: NewEntry): number {
   const result = db
     .prepare('INSERT INTO portfolio_evidence (project, status, features, links, approved_for_use) VALUES (?, ?, ?, ?, ?)')
     .run(entry.project, entry.status, entry.features, JSON.stringify(entry.links), entry.approvedForUse ? 1 : 0);
-  logActivity(db, { actor: 'Dane', kind: 'portfolio-added', summary: `You added “${entry.project.slice(0, MAX_TITLE)}” to your portfolio.` });
+  logActivity(db, { actor: 'Dane', kind: 'portfolio-added', summary: `You added ${quotedName(entry.project)} to your portfolio.` });
   return Number(result.lastInsertRowid);
 }
 
@@ -129,7 +129,7 @@ export function updateEntry(db: DatabaseSync, id: number, entry: NewEntry): bool
     )
     .run(entry.project, entry.status, entry.features, JSON.stringify(entry.links), entry.approvedForUse ? 1 : 0, id);
   if (Number(result.changes) !== 1) return false;
-  logActivity(db, { actor: 'Dane', kind: 'portfolio-updated', summary: `You updated “${entry.project.slice(0, MAX_TITLE)}” in your portfolio.` });
+  logActivity(db, { actor: 'Dane', kind: 'portfolio-updated', summary: `You updated ${quotedName(entry.project)} in your portfolio.` });
   return true;
 }
 
@@ -137,7 +137,7 @@ export function updateEntry(db: DatabaseSync, id: number, entry: NewEntry): bool
 export function removeEntry(db: DatabaseSync, id: number): boolean {
   const entry = getEntry(db, id);
   if (!entry || Number(db.prepare('DELETE FROM portfolio_evidence WHERE id = ?').run(id).changes) !== 1) return false;
-  logActivity(db, { actor: 'Dane', kind: 'portfolio-removed', summary: `You removed “${entry.project.slice(0, MAX_TITLE)}” from your portfolio.` });
+  logActivity(db, { actor: 'Dane', kind: 'portfolio-removed', summary: `You removed ${quotedName(entry.project)} from your portfolio.` });
   return true;
 }
 

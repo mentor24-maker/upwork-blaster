@@ -12,6 +12,15 @@
  * "[hidden]". This repository is public and the log is shown on a page, so a
  * secret must never reach it.
  *
+ * A secret is hidden BEFORE any text is cut short or squashed onto one
+ * line, so a secret that falls across the cut, or has a space or a line
+ * break inside it, is still hidden whole (`quotedName`, `logActivity`).
+ *
+ * One kind of line can be written by someone who is not signed in: a refused
+ * sign-in. So that a script guessing passwords cannot push Dane's real
+ * history off the page, refusals in a row share one line that counts them
+ * (`logRepeatedActivity`); the next thing anyone does starts a fresh line.
+ *
  * Writing the line never costs Dane his save: if it cannot be written, the
  * save stands and the failure goes to the app's own log (CLAUDE.md: a step
  * that fails says so).
@@ -93,22 +102,61 @@ export function logActivity(db: DatabaseSync, event: NewEvent): void {
 }
 
 /**
- * Write one line to a database opened only now. For the sign-in route, which
- * touches no database otherwise: one that cannot be opened must never stop
- * him signing in, so that failure is only reported too.
+ * Write a line that may repeat, such as a refused sign-in. When the newest
+ * line of all is already one of this kind, it is counted again instead of
+ * adding another: its count goes up, its time becomes now, and its wording
+ * comes from `say(times)`. Never throws, like `logActivity`.
  */
-export function logActivityOpening(open: () => DatabaseSync, event: NewEvent): void {
+export function logRepeatedActivity(db: DatabaseSync, event: Omit<NewEvent, 'summary'>, say: (times: number) => string): void {
   try {
-    logActivity(open(), event);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const newest = db.prepare('SELECT id, kind, times FROM activity_event ORDER BY id DESC LIMIT 1').get() as
+        | { id: number; kind: string; times: number }
+        | undefined;
+      if (newest && newest.kind === event.kind) {
+        const times = newest.times + 1;
+        db.prepare(
+          "UPDATE activity_event SET times = ?, summary = ?, at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+        ).run(times, oneLine(scrubSecrets(say(times)), MAX_SUMMARY), newest.id);
+      } else {
+        logActivity(db, { ...event, summary: say(1) });
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
   } catch (err) {
     console.error(`the activity log line "${event.kind}" could not be written: ${(err as Error).message}`);
   }
 }
 
+/**
+ * Write one line to a database opened only now. For the sign-in route, which
+ * touches no database otherwise: one that cannot be opened must never stop
+ * him signing in, so that failure is only reported too. With `repeated`, a
+ * line of the same kind in a row is counted instead (`logRepeatedActivity`).
+ */
+export function logActivityOpening(open: () => DatabaseSync, event: NewEvent, repeated?: (times: number) => string): void {
+  try {
+    const db = open();
+    if (repeated) logRepeatedActivity(db, event, repeated);
+    else logActivity(db, event);
+  } catch (err) {
+    console.error(`the activity log line "${event.kind}" could not be written: ${(err as Error).message}`);
+  }
+}
+
+/** A name from Dane's data (a job's title, a portfolio project), secrets hidden first, then cut short and quoted. */
+export function quotedName(name: string, env: Env = process.env): string {
+  return `“${oneLine(scrubSecrets(name, env), MAX_TITLE)}”`;
+}
+
 /** A job's title, quoted and cut short, for a log line. */
 export function jobName(db: DatabaseSync, opportunityId: number): string {
   const row = db.prepare('SELECT title FROM opportunity WHERE id = ?').get(opportunityId) as { title: string } | undefined;
-  return row ? `“${oneLine(row.title, MAX_TITLE)}”` : `job ${opportunityId}`;
+  return row ? quotedName(row.title) : `job ${opportunityId}`;
 }
 
 /** The job a proposal is for, as `jobName` gives it, and its id. */
