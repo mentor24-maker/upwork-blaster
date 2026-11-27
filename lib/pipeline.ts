@@ -17,6 +17,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { latestSent } from './sent.ts';
+import { aiSpendSummary, type SpendSummary } from './ai/usage.ts';
 
 export const PIPELINE_STATUSES = ['sent', 'replied', 'interviewing', 'won', 'lost'] as const;
 export type PipelineStatus = (typeof PIPELINE_STATUSES)[number];
@@ -221,4 +222,93 @@ export function applyPipelineAction(db: DatabaseSync, a: PipelineAction): Pipeli
   if (a.action === 'move') return moveJob(db, a.proposalId, a.status);
   if (a.action === 'note') return addNote(db, a.proposalId, a.text);
   return setNextAction(db, a.proposalId, a.text);
+}
+
+// ---------------------------------------------------------------- outcomes
+
+/**
+ * The Outcomes numbers at the top of the board (task 6.4). Read-only: worked
+ * out from `sent_record` and `pipeline_move`, never written.
+ *
+ * How each count is decided (one rule):
+ *  - **Sent**: every proposal he marked "I sent it" (the same set the board shows).
+ *  - **Replied / Interviewing**: a job counts once if its move history ever
+ *    reached that status. A job moved to Replied and back to Sent still counts
+ *    as replied, once, however many times it moved.
+ *  - **Won / Lost**: the status in force now (its newest move), so a job moved
+ *    to Won by mistake and then back is not counted as won.
+ *
+ * Rates are whole percentages of the sent count, and absent (null) when
+ * nothing was sent, never NaN. The AI spend is an estimate from the price
+ * table (lib/ai/pricing.ts), kept apart from the measured counts.
+ */
+export type PipelineOutcomes = {
+  sent: number;
+  replied: number;
+  interviewing: number;
+  won: number;
+  lost: number;
+  /** Whole percentages of `sent`; null when nothing was sent. */
+  replyRate: number | null;
+  winRate: number | null;
+  /** Estimated, from the price table: the total covers priced calls only. */
+  spend: SpendSummary;
+  /** spend.costUsd ÷ sent; null when nothing was sent. */
+  spendPerSentUsd: number | null;
+};
+
+export function pipelineOutcomes(db: DatabaseSync): PipelineOutcomes {
+  const ids = db
+    .prepare('SELECT DISTINCT proposal_id FROM sent_record ORDER BY proposal_id')
+    .all()
+    .map((r) => Number(r.proposal_id));
+  const reached = db.prepare('SELECT 1 AS hit FROM pipeline_move WHERE proposal_id = ? AND status = ? LIMIT 1');
+  const newest = db.prepare('SELECT status FROM pipeline_move WHERE proposal_id = ? ORDER BY id DESC LIMIT 1');
+  const everReached = (id: number, status: PipelineStatus) => reached.get(id, status) !== undefined;
+  const nowIn = (id: number): PipelineStatus => {
+    const move = newest.get(id);
+    return move && isPipelineStatus(move.status) ? move.status : 'sent';
+  };
+  const sent = ids.length;
+  const replied = ids.filter((id) => everReached(id, 'replied')).length;
+  const interviewing = ids.filter((id) => everReached(id, 'interviewing')).length;
+  const won = ids.filter((id) => nowIn(id) === 'won').length;
+  const lost = ids.filter((id) => nowIn(id) === 'lost').length;
+  const rate = (count: number) => (sent === 0 ? null : Math.round((count / sent) * 100));
+  const spend = aiSpendSummary(db);
+  return {
+    sent,
+    replied,
+    interviewing,
+    won,
+    lost,
+    replyRate: rate(replied),
+    winRate: rate(won),
+    spend,
+    spendPerSentUsd: sent === 0 ? null : spend.costUsd / sent,
+  };
+}
+
+const dollars = (usd: number) => (usd > 0 && usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`);
+const callCount = (count: number) => `${count} call${count === 1 ? '' : 's'}`;
+
+/** The Outcomes section in plain words: measured lines and estimated lines, never mixed in one line. */
+export function outcomeLines(o: PipelineOutcomes): { measured: string[]; estimated: string[] } {
+  if (o.sent === 0 || o.replyRate === null || o.winRate === null || o.spendPerSentUsd === null) {
+    return { measured: ['No proposals sent yet.'], estimated: [] };
+  }
+  const measured = [
+    `Sent: ${o.sent} · Replied: ${o.replied} · Interviewing: ${o.interviewing} · Won: ${o.won} · Lost: ${o.lost}`,
+    `Reply rate: ${o.replyRate}% (${o.replied} of ${o.sent})`,
+    `Win rate: ${o.winRate}% (${o.won} of ${o.sent})`,
+  ];
+  const s = o.spend;
+  const why = 'Worked out from the price table in the app (lib/ai/pricing.ts), not from a bill.';
+  const estimated = [
+    `AI spend per sent proposal: ${dollars(o.spendPerSentUsd)} (${dollars(s.costUsd)} across ${callCount(s.pricedCalls)}, ÷ ${o.sent} sent)`,
+    s.unpricedCalls === 0
+      ? why
+      : `${why} Plus ${callCount(s.unpricedCalls)} not priced (${s.unpricedModels.join(', ')} has no price on record), so the real total is higher.`,
+  ];
+  return { measured, estimated };
 }

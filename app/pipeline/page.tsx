@@ -3,7 +3,9 @@ import {
   buildPipeline,
   MAX_NEXT_ACTION,
   MAX_NOTE,
+  outcomeLines,
   PIPELINE_LABELS,
+  pipelineOutcomes,
   PIPELINE_STATUSES,
   type PipelineCard,
 } from '../../lib/pipeline.ts';
@@ -131,7 +133,9 @@ export default async function PipelinePage({
   searchParams: Promise<{ done?: string | string[]; error?: string | string[]; job?: string | string[] }>;
 }) {
   const { done, error, job } = await searchParams;
-  const board = buildPipeline(appDatabase());
+  const db = appDatabase();
+  const board = buildPipeline(db);
+  const outcomes = outcomeLines(pipelineOutcomes(db));
   const notice: Notice = { ok: pick(DONE, done), problem: pick(ERRORS, error) };
   // A message about one job shows in that job's card, where he clicked; one
   // about no job on the board (or none named) shows at the top.
@@ -149,6 +153,27 @@ export default async function PipelinePage({
         guesses.
       </p>
       {onBoard ? null : <Message {...notice} />}
+      <section data-pipeline="outcomes" style={{ ...card, background: '#f9fafb' }}>
+        <h2 style={{ fontSize: '1.05em', margin: '0 0 0.4rem' }}>Outcomes</h2>
+        <div data-outcomes="measured">
+          <strong>Measured: from your own moves</strong>
+          {outcomes.measured.map((line) => (
+            <p key={line} style={{ margin: '0.2rem 0' }}>
+              {line}
+            </p>
+          ))}
+        </div>
+        {outcomes.estimated.length > 0 ? (
+          <div data-outcomes="estimated" style={{ marginTop: '0.5rem' }}>
+            <strong>Estimated</strong>
+            {outcomes.estimated.map((line, i) => (
+              <p key={line} style={i === 0 ? { margin: '0.2rem 0' } : { ...muted, margin: '0.2rem 0' }}>
+                {line}
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </section>
       {board.total === 0 ? (
         <p data-pipeline="empty">
           Nothing here yet. When you send an approved proposal in Upwork and press “I sent it” on its review screen, the job
