@@ -1,9 +1,11 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gate } from '../lib/gate.ts';
+import { openDatabase, runMigrations } from '../lib/db.ts';
 import {
   createSessionToken,
   isValidSessionToken,
@@ -21,6 +23,15 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Made-up values for the tests only; the real ones live in Doppler.
 const PASSWORD = 'test-only-password';
 const SECRET = 'test-only-session-secret';
+// A sign-in writes a line to the activity log, so the routes get a made-up
+// data folder of their own, never the real one.
+const DATA_DIR = mkdtempSync(join(tmpdir(), 'ub-sign-in-test-'));
+{
+  const setup = openDatabase(join(DATA_DIR, 'app.sqlite'));
+  runMigrations(setup);
+  setup.close();
+}
+after(() => rmSync(DATA_DIR, { recursive: true, force: true }));
 const ENV = { APP_PASSWORD: PASSWORD, APP_SESSION_SECRET: SECRET };
 const CONFIG = { password: PASSWORD, secret: SECRET };
 
@@ -35,8 +46,8 @@ const form = (password) => {
 
 /** Run a route handler with the app's two secrets set as given. */
 async function withEnv(env, fn) {
-  const saved = { APP_PASSWORD: process.env.APP_PASSWORD, APP_SESSION_SECRET: process.env.APP_SESSION_SECRET };
-  for (const [k, v] of Object.entries({ APP_PASSWORD: undefined, APP_SESSION_SECRET: undefined, ...env })) {
+  const saved = { APP_PASSWORD: process.env.APP_PASSWORD, APP_SESSION_SECRET: process.env.APP_SESSION_SECRET, UB_DATA_DIR: process.env.UB_DATA_DIR };
+  for (const [k, v] of Object.entries({ APP_PASSWORD: undefined, APP_SESSION_SECRET: undefined, UB_DATA_DIR: DATA_DIR, ...env })) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }

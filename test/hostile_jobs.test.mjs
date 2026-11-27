@@ -249,7 +249,11 @@ test('saving every hostile post through the form changes nothing but the job, it
     const db = openDatabase(join(dir, 'app.sqlite'));
     const after = counts(db);
     const n = FIXTURES.length;
-    assert.deepEqual(after, { ...before, opportunity: n, evaluation: n, ai_usage: n }, 'only the jobs, their scores and their AI cost were written');
+    assert.deepEqual(
+      after,
+      { ...before, opportunity: n, evaluation: n, ai_usage: n, activity_event: before.activity_event + 3 * n },
+      'only the jobs, their scores, their AI cost and three activity lines each (saved, read, scored) were written',
+    );
     assert.deepEqual(db.prepare('SELECT * FROM preferences').all(), prefsBefore, 'his preferences are untouched');
     assert.deepEqual(db.prepare('SELECT * FROM portfolio_evidence').all(), portfolioBefore, 'his portfolio is untouched');
     assert.equal(after.decision, 0, 'no job was pursued, passed or put off');

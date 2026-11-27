@@ -38,6 +38,8 @@ import { POST as postWorkspace } from '../../app/api/proposals/route.ts';
 import { POST as postApproval } from '../../app/api/approvals/route.ts';
 import { POST as postSent } from '../../app/api/sent/route.ts';
 import { POST as postPipeline } from '../../app/api/pipeline/route.ts';
+import { POST as postCopied } from '../../app/api/copied/route.ts';
+import { activityLines, listActivity } from '../../lib/activity.ts';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
 const { jobs: JOBS } = fixture('jobs.json');
@@ -101,6 +103,7 @@ function landedOn(res, what) {
 const STEPS = [
   {
     name: 'sign in',
+    leaves: ['signed-in'],
     async run(ctx) {
       const res = await click(ctx, '/api/sign-in', postSignIn, { password: PASSWORD });
       assert.equal(landedOn(res, 'sign in'), '/');
@@ -111,6 +114,7 @@ const STEPS = [
   },
   {
     name: 'save preferences',
+    leaves: ['preferences-saved'],
     async run(ctx) {
       const res = await click(ctx, '/api/preferences', postPreferences, {
         themes: 'Dashboards',
@@ -128,6 +132,7 @@ const STEPS = [
   },
   {
     name: 'add portfolio',
+    leaves: ['portfolio-added'],
     async run(ctx) {
       for (const entry of PORTFOLIO) {
         const fields = { action: 'add', project: entry.project, status: entry.status, features: entry.features, links: entry.links };
@@ -139,6 +144,7 @@ const STEPS = [
   },
   {
     name: 'paste jobs',
+    leaves: ['job-saved', 'job-extracted', 'job-scored'],
     async run(ctx) {
       ctx.jobIds = {};
       for (const j of JOBS) {
@@ -154,6 +160,7 @@ const STEPS = [
   },
   {
     name: 'rank',
+    leaves: [],
     async run(ctx) {
       const inbox = buildInbox(ctx.db());
       assert.ok(inbox.top.length > 0, 'the Inbox ranks at least one job');
@@ -168,10 +175,16 @@ const STEPS = [
         'the WordPress and casino jobs are set apart, never ranked',
       );
       ctx.pick = inbox.top[0].job.id;
+      // Ranking only reads: its line on the Activity page is the score the app gave each job when it was pasted.
+      const page = activityLines(ctx.db()).map((l) => l.what);
+      for (const c of [...inbox.top, ...inbox.excluded]) {
+        assert.ok(page.some((w) => w.includes(`“${c.job.title}”`) && /^The app (scored|set)/.test(w)), `the Activity page says how “${c.job.title}” was ranked`);
+      }
     },
   },
   {
     name: 'pursue',
+    leaves: ['decision', 'proposal-opened', 'draft-created'],
     async run(ctx) {
       assert.ok(ctx.pick, 'there is a ranked job to pursue');
       const res = await click(ctx, '/api/decisions', postDecision, { id: String(ctx.pick), decision: 'pursue' });
@@ -186,6 +199,7 @@ const STEPS = [
   },
   {
     name: 'answer question',
+    leaves: ['answer-saved'],
     async run(ctx) {
       assert.ok(ctx.proposalId, 'a job was pursued');
       const proposal = getProposal(ctx.db(), ctx.proposalId);
@@ -203,6 +217,7 @@ const STEPS = [
   },
   {
     name: 'approve',
+    leaves: ['draft-approved'],
     async run(ctx) {
       const p = getProposal(ctx.db(), ctx.proposalId);
       assert.ok(p, 'there is a proposal to review');
@@ -218,14 +233,21 @@ const STEPS = [
   },
   {
     name: 'copy',
+    leaves: ['proposal-copied'],
     async run(ctx) {
       const copied = copyText(ctx.db(), ctx.proposalId);
       assert.ok(copied, 'Copy is offered on the approved proposal');
+      // Each Copy button tells the app it copied, for the activity log.
+      for (const part of ['text', ...copied.answers.map((_, i) => `answer-${i + 1}`)]) {
+        const res = await click(ctx, '/api/copied', postCopied, { proposal: String(ctx.proposalId), part });
+        assert.equal(res.status, 204, `copying ${part} is noted`);
+      }
       ctx.copied = copied;
     },
   },
   {
     name: 'mark sent',
+    leaves: ['proposal-sent'],
     async run(ctx) {
       assert.ok(ctx.copied, 'he copied the proposal before saying he sent it');
       const state = approvalState(ctx.db(), ctx.proposalId);
@@ -240,6 +262,7 @@ const STEPS = [
   },
   {
     name: 'track',
+    leaves: ['pipeline-moved', 'pipeline-note', 'pipeline-next'],
     async run(ctx) {
       const at = `&job=${ctx.proposalId}#job-${ctx.proposalId}`;
       const p = String(ctx.proposalId);
@@ -280,6 +303,18 @@ function assertFlowFinished(ctx) {
   assert.equal(board.total, 1, 'only the one sent job is on the board');
 }
 
+/** The step left a readable line on the Activity page for each thing it did: when (Mountain time), who and what. */
+function assertStepLogged(ctx, step, seenId) {
+  const fresh = activityLines(ctx.db()).filter((l) => l.id > seenId);
+  const kinds = new Set(listActivity(ctx.db()).filter((e) => e.id > seenId).map((e) => e.kind));
+  for (const kind of step.leaves) assert.ok(kinds.has(kind), `the "${step.name}" step leaves a "${kind}" line on the Activity page`);
+  for (const l of fresh) {
+    assert.match(l.when, /^[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2}\s?[AP]M MT$/, `"${l.what}" says when, in Mountain time`);
+    assert.ok(['You', 'The AI', 'The app'].includes(l.who), `"${l.what}" says who`);
+    assert.match(l.what, /^[A-Z].{5,}\.$/, 'and reads as a sentence');
+  }
+}
+
 /** Run the flow in a fresh, empty app, leaving out the named step, then check where it ended. */
 async function runFlow({ skip = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'ub-e2e-test-'));
@@ -305,9 +340,14 @@ async function runFlow({ skip = null } = {}) {
     const setup = openDatabase(join(dir, 'app.sqlite'));
     runMigrations(setup);
     setup.close();
-    for (const step of STEPS) if (step.name !== skip) await step.run(ctx);
+    for (const step of STEPS) {
+      if (step.name === skip) continue;
+      const seen = listActivity(ctx.db())[0]?.id ?? 0;
+      await step.run(ctx);
+      assertStepLogged(ctx, step, seen);
+    }
     assertFlowFinished(ctx);
-    return { claude, ctx };
+    return { claude, ctx, activity: ctx.db().prepare('SELECT * FROM activity_event').all() };
   } finally {
     for (const db of opened) if (db.isOpen) db.close();
     useAiDepsForTests(null);
@@ -329,6 +369,23 @@ test('§13.15: the whole first version, from pasting a job to tracking it after 
   );
   assert.ok(claude.sent.every((s) => s.url === ANTHROPIC_URL), 'no request is pointed anywhere but the Claude API');
   assert.ok(claude.sent.every((s) => s.headers['x-api-key'] === FAKE_KEY), 'and only ever with the fake key');
+});
+
+test('the activity log of the whole flow holds no password, session cookie or AI key', async () => {
+  const { ctx, activity } = await runFlow();
+  assert.ok(activity.length >= STEPS.length, 'every step wrote to it');
+  const all = JSON.stringify(activity);
+  for (const [what, secret] of [
+    ['the app password', PASSWORD],
+    ['the session key', 'made-up-e2e-session-secret'],
+    ['the session cookie', ctx.cookie],
+    ['the AI key', FAKE_KEY],
+  ]) {
+    assert.ok(secret && secret.length > 8, `${what} is known to the test`);
+    assert.ok(!all.includes(secret), `${what} is not in the activity log`);
+    assert.ok(!all.includes(decodeURIComponent(secret)), `${what} is not in it decoded either`);
+  }
+  assert.doesNotMatch(all, /sk-ant-/, 'nothing shaped like a Claude key');
 });
 
 for (const step of STEPS) {

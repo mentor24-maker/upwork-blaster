@@ -202,8 +202,8 @@ test('§13.3: pressing Pursue creates a draft and nothing else, and sends nothin
     const after = counts(db);
     assert.deepEqual(
       after,
-      { ...before, decision: 1, proposal: 1, proposal_question: 2, ai_usage: 1 },
-      'only the decision, the draft, its questions and the AI cost were written',
+      { ...before, decision: 1, proposal: 1, proposal_question: 2, ai_usage: 1, activity_event: before.activity_event + 3 },
+      'only the decision, the draft, its questions, the AI cost and their three activity lines were written',
     );
     assert.deepEqual(
       ['opportunity', 'evaluation', 'preferences', 'portfolio_evidence'].map((t) => db.prepare(`SELECT * FROM ${t}`).all()),
@@ -226,7 +226,7 @@ test('§13.3: pressing Pursue creates a draft and nothing else, and sends nothin
     assert.equal(again.headers.get('location'), location);
     assert.equal(model.sent.length, 1);
     const db2 = openDatabase(join(dir, 'app.sqlite'));
-    assert.deepEqual(counts(db2), { ...after, decision: 2 });
+    assert.deepEqual(counts(db2), { ...after, decision: 2, activity_event: after.activity_event + 1 }, 'and one activity line for the decision');
     db2.close();
   } finally {
     useDraftDepsForTests(null);

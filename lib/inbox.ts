@@ -17,6 +17,7 @@ import type { SavedJob } from './jobs.ts';
 import { getJob, listJobs } from './jobs.ts';
 import type { Confidence, Exclusion, SavedEvaluation } from './score.ts';
 import { latestEvaluations, rankEvaluations } from './score.ts';
+import { logJobActivity } from './activity.ts';
 
 export const DECISIONS = ['pursue', 'pass', 'revisit'] as const;
 export type DecisionKind = (typeof DECISIONS)[number];
@@ -61,7 +62,14 @@ export function recordDecision(
     .run(opportunityId, decision, why);
   const row = db.prepare(`${SELECT} WHERE id = ?`).get(Number(result.lastInsertRowid));
   if (!row) throw new Error(`the decision on job ${opportunityId} did not read back after saving`);
-  return toDecision(row);
+  const saved = toDecision(row);
+  const said = {
+    pursue: (name: string) => `You chose to pursue ${name}.`,
+    pass: (name: string) => `You passed on ${name}.`,
+    revisit: (name: string) => `You marked ${name} to revisit later.`,
+  }[saved.decision];
+  logJobActivity(db, opportunityId, 'Dane', 'decision', said);
+  return saved;
 }
 
 /** The decision in force for one job: its newest, if any. */

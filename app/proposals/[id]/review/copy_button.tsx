@@ -34,11 +34,24 @@ async function copy(text: string): Promise<boolean> {
   }
 }
 
-export function CopyButton({ text, label }: { text: string; label: string }) {
+/** Tell the activity log he copied it (app/api/copied). A failure here never gets in his way. */
+function record(proposal: number, part: string): void {
+  const body = new FormData();
+  body.set('proposal', String(proposal));
+  body.set('part', part);
+  fetch('/api/copied', { method: 'POST', body }).catch(() => {});
+}
+
+export function CopyButton({ text, label, proposal, part }: { text: string; label: string; proposal: number; part: string }) {
   const [said, setSaid] = useState<'copied' | 'failed' | null>(null);
+  const onClick = async () => {
+    const ok = await copy(text);
+    setSaid(ok ? 'copied' : 'failed');
+    if (ok) record(proposal, part);
+  };
   return (
     <span>
-      <button type="button" data-copy={label} onClick={async () => setSaid((await copy(text)) ? 'copied' : 'failed')}>
+      <button type="button" data-copy={label} onClick={onClick}>
         Copy {label}
       </button>{' '}
       <span aria-live="polite" style={{ color: said === 'failed' ? '#a40000' : '#2a6a34', fontSize: '0.9em' }}>

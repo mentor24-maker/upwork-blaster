@@ -34,6 +34,7 @@ import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { approvalBlock, type ClaimFlag } from './claimCheck.ts';
 import { getProposal, unanswered, type SavedProposal } from './draft.ts';
+import { logProposalActivity } from './activity.ts';
 
 /** The fingerprint of a proposal's exact text and answers: 64 hex characters. */
 export function fingerprintOf(p: Pick<SavedProposal, 'draft' | 'questions'>): string {
@@ -198,5 +199,6 @@ function approveInside(db: DatabaseSync, proposalId: number, seenFingerprint: st
   if (!saved || saved.fingerprint !== now || saved.cancelledAt !== null) {
     throw new Error(`the approval of proposal ${proposalId} did not read back after saving`);
   }
+  logProposalActivity(db, proposalId, 'Dane', 'draft-approved', (name) => `You approved this exact version of the proposal for ${name}.`);
   return { ok: true, approval: saved, already: false };
 }
