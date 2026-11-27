@@ -4,6 +4,8 @@ Built by the Alphire Spirality loop. `npm run verify` is the definition of done;
 
 The build plan: [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md).
 
+How to set it up and use it, in plain language: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md).
+
 ## Running it
 
 The app is a Next.js site. On the Mini it runs as a launchd service (macOS's
