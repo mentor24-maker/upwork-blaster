@@ -1,0 +1,287 @@
+// A proposal's history (UB-26): every change to the draft or the screening
+// questions and answers keeps a numbered copy of the whole proposal, and no
+// copy can ever change afterwards. Every job here is made up; no test calls
+// the real API.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { migrationFiles, MIGRATIONS_DIR, openDatabase, runMigrations } from '../lib/db.ts';
+import { saveJob } from '../lib/jobs.ts';
+import { DEFAULT_SETTINGS, savePreferences } from '../lib/preferences.ts';
+import { addQuestion, answerQuestion, DRAFT_MODEL, getProposal, openProposal, saveDraft, writeDraft } from '../lib/draft.ts';
+import { approve, approvalState, fingerprintOf } from '../lib/approval.ts';
+import { latestVersion, proposalVersions } from '../lib/proposalVersions.ts';
+
+const AI_DRAFT = 'Hello, I would build your sales dashboard in Next.js and keep you posted every week.';
+const POST_TEXT = 'We need a sales dashboard in Next.js.\n\nScreening questions:\n1. How soon can you start?\n2. Have you used Postgres?';
+
+function fakeModel(text = AI_DRAFT, status = 200) {
+  return {
+    getKey: () => 'sk-ant-fake-test-key-2626',
+    fetchImpl: async () =>
+      status === 200
+        ? new Response(
+            JSON.stringify({ model: DRAFT_MODEL, stop_reason: 'end_turn', content: [{ type: 'text', text }], usage: { input_tokens: 900, output_tokens: 250 } }),
+            { status: 200 },
+          )
+        : new Response(JSON.stringify({ error: { message: 'overloaded' } }), { status }),
+  };
+}
+
+function freshDb(path = ':memory:', dir = MIGRATIONS_DIR) {
+  const db = openDatabase(path);
+  runMigrations(db, dir);
+  savePreferences(db, { ...DEFAULT_SETTINGS, themes: ['Dashboards'], requiredTech: ['Next.js'], exclusions: [] });
+  return db;
+}
+
+let n = 0;
+function addJob(db, description = POST_TEXT) {
+  n++;
+  const saved = saveJob(db, {
+    url: `https://www.upwork.com/jobs/~01version${String(n).padStart(6, '0')}`,
+    title: `Made-up dashboard job ${n}`,
+    description,
+    budget: '$2,000',
+    jobType: 'fixed',
+    postedAt: null,
+    client: null,
+    connectsCost: null,
+  });
+  assert.ok(saved.ok);
+  return saved.id;
+}
+
+const versionCount = (db, id) => proposalVersions(db, id).length;
+/** The whole proposal as it is now, in a version's shape. */
+const asNow = (db, id) => {
+  const p = getProposal(db, id);
+  return { draft: p.draft, answers: p.questions.map((q) => [q.question, q.answer ?? '']) };
+};
+const rawRows = (db) => db.prepare('SELECT * FROM proposal_version ORDER BY id').all().map((r) => ({ ...r }));
+
+// ── saving ────────────────────────────────────────────────────────────────
+
+test('the first AI draft saves version 1, holding the draft and every question', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  const versions = proposalVersions(db, p.id);
+  assert.equal(versions.length, 1);
+  const [v1] = versions;
+  assert.equal(v1.versionNo, 1);
+  assert.equal(v1.change, 'first-draft');
+  assert.equal(v1.author, 'AI');
+  assert.equal(v1.draft, AI_DRAFT);
+  assert.deepEqual(v1.answers, [
+    ['How soon can you start?', ''],
+    ['Have you used Postgres?', ''],
+  ]);
+  assert.match(v1.savedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+});
+
+test('no version is kept while the AI has not written a draft; the retried draft is version 1', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel(AI_DRAFT, 529));
+  assert.equal(p.draft, null);
+  assert.ok(answerQuestion(db, p.id, p.questions[0].id, 'Monday.'));
+  assert.equal(versionCount(db, p.id), 0, 'nothing Dane could send yet, so no version');
+
+  await writeDraft(db, p.id, fakeModel());
+  const versions = proposalVersions(db, p.id);
+  assert.equal(versions.length, 1);
+  assert.equal(versions[0].versionNo, 1);
+  assert.equal(versions[0].change, 'first-draft');
+  assert.deepEqual(versions[0].answers[0], ['How soon can you start?', 'Monday.']);
+});
+
+test('a draft edit adds exactly one new version, numbered one higher, holding the whole proposal', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  assert.ok(saveDraft(db, p.id, 'My own words about the dashboard.'));
+  const versions = proposalVersions(db, p.id);
+  assert.equal(versions.length, 2);
+  assert.equal(versions[1].versionNo, 2);
+  assert.equal(versions[1].change, 'draft');
+  assert.equal(versions[1].author, 'Dane');
+  assert.deepEqual({ draft: versions[1].draft, answers: versions[1].answers }, asNow(db, p.id));
+});
+
+test('an answer adds exactly one new version, numbered one higher, holding the whole proposal', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  assert.ok(answerQuestion(db, p.id, p.questions[1].id, 'Yes, for five years.'));
+  const versions = proposalVersions(db, p.id);
+  assert.equal(versions.length, 2);
+  assert.equal(versions[1].versionNo, 2);
+  assert.equal(versions[1].change, 'answer');
+  assert.equal(versions[1].author, 'Dane');
+  assert.deepEqual(versions[1].answers, [
+    ['How soon can you start?', ''],
+    ['Have you used Postgres?', 'Yes, for five years.'],
+  ]);
+  assert.deepEqual({ draft: versions[1].draft, answers: versions[1].answers }, asNow(db, p.id));
+});
+
+test('an added question adds exactly one new version, numbered one higher, holding the whole proposal', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  assert.ok(addQuestion(db, p.id, 'What is your hourly rate?'));
+  const versions = proposalVersions(db, p.id);
+  assert.equal(versions.length, 2);
+  assert.equal(versions[1].versionNo, 2);
+  assert.equal(versions[1].change, 'question');
+  assert.equal(versions[1].answers.length, 3);
+  assert.deepEqual(versions[1].answers[2], ['What is your hourly rate?', '']);
+  assert.deepEqual({ draft: versions[1].draft, answers: versions[1].answers }, asNow(db, p.id));
+});
+
+test('saving the same text again adds no version', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  assert.ok(saveDraft(db, p.id, AI_DRAFT), 'the AI text saved as-is');
+  assert.equal(versionCount(db, p.id), 1);
+  assert.ok(saveDraft(db, p.id, 'Changed once.'));
+  assert.ok(saveDraft(db, p.id, 'Changed once.'));
+  assert.equal(versionCount(db, p.id), 2);
+  assert.ok(answerQuestion(db, p.id, p.questions[0].id, 'Monday.'));
+  assert.ok(answerQuestion(db, p.id, p.questions[0].id, 'Monday.'));
+  assert.equal(versionCount(db, p.id), 3);
+});
+
+test('a change that saves nothing keeps no version', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  assert.equal(answerQuestion(db, p.id, 999_999, 'Nope.'), false, 'no such question');
+  assert.equal(saveDraft(db, 999_999, 'Nope.'), false, 'no such proposal');
+  assert.equal(versionCount(db, p.id), 1);
+});
+
+// ── never changing ────────────────────────────────────────────────────────
+
+test('earlier versions never change: after several edits each reads back byte for byte as it was saved', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  const snapshots = [rawRows(db)];
+  assert.ok(answerQuestion(db, p.id, p.questions[0].id, 'Next Monday.'));
+  snapshots.push(rawRows(db));
+  assert.ok(saveDraft(db, p.id, 'Hello — my own words, with “quotes” and an emoji 🚀.\n\nSecond paragraph.'));
+  snapshots.push(rawRows(db));
+  assert.ok(addQuestion(db, p.id, 'Can you start this week?'));
+  snapshots.push(rawRows(db));
+  assert.ok(answerQuestion(db, p.id, p.questions[0].id, null));
+  assert.ok(saveDraft(db, p.id, 'A shorter draft.'));
+
+  const final = rawRows(db);
+  assert.equal(final.length, 6);
+  assert.deepEqual(final.map((r) => r.version_no), [1, 2, 3, 4, 5, 6]);
+  for (const snap of snapshots) assert.deepEqual(final.slice(0, snap.length), snap, 'every earlier row is exactly as it was');
+  assert.equal(final[2].draft, 'Hello — my own words, with “quotes” and an emoji 🚀.\n\nSecond paragraph.');
+});
+
+test('the database refuses a direct UPDATE or DELETE of a version', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  const before = rawRows(db);
+  assert.throws(() => db.prepare("UPDATE proposal_version SET draft = 'tampered' WHERE proposal_id = ?").run(p.id), /can never be changed/);
+  assert.throws(() => db.prepare('UPDATE proposal_version SET version_no = 9').run(), /can never be changed/);
+  assert.throws(() => db.prepare('DELETE FROM proposal_version WHERE proposal_id = ?').run(p.id), /can never be deleted/);
+  assert.throws(() => db.prepare('DELETE FROM proposal_version').run(), /can never be deleted/);
+  assert.deepEqual(rawRows(db), before);
+});
+
+test('two versions of one proposal can never share a number', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  assert.throws(
+    () => db.prepare("INSERT INTO proposal_version (proposal_id, version_no, draft, answers, change, author) VALUES (?, 1, 'x', '[]', 'draft', 'Dane')").run(p.id),
+    /UNIQUE/,
+  );
+});
+
+// ── one transaction ───────────────────────────────────────────────────────
+
+/** Make every version save fail, the way a full disk or a bug would. */
+const breakVersions = (db) =>
+  db.exec("CREATE TRIGGER test_break_versions BEFORE INSERT ON proposal_version BEGIN SELECT RAISE(ABORT, 'test: the version could not be saved'); END;");
+
+test('if saving the version fails, the change itself is not saved either', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  const before = getProposal(db, p.id);
+  breakVersions(db);
+
+  assert.throws(() => saveDraft(db, p.id, 'An edit that must not stick.'), /could not be saved/);
+  assert.throws(() => answerQuestion(db, p.id, p.questions[0].id, 'An answer that must not stick.'), /could not be saved/);
+  assert.throws(() => addQuestion(db, p.id, 'A question that must not stick?'), /could not be saved/);
+  assert.deepEqual(getProposal(db, p.id), before, 'the draft, the answers and the questions are unchanged');
+  assert.equal(db.isTransaction, false, 'no transaction is left open');
+
+  // The AI's first draft too.
+  const p2 = await openProposal(db, addJob(db), fakeModel(AI_DRAFT, 529));
+  await assert.rejects(writeDraft(db, p2.id, fakeModel()), /could not be saved/);
+  assert.equal(getProposal(db, p2.id).draft, null, 'the first draft was not saved without its version');
+});
+
+// ── approving and sending, unchanged ─────────────────────────────────────
+
+test('a version holds what the approval fingerprint is worked out from', async () => {
+  const db = freshDb();
+  const p = await openProposal(db, addJob(db), fakeModel());
+  for (const q of p.questions) assert.ok(answerQuestion(db, p.id, q.id, 'Next Monday.'));
+  const now = getProposal(db, p.id);
+  assert.equal(approve(db, now.id, fingerprintOf(now)).ok, true);
+  const v = latestVersion(db, p.id);
+  const fromVersion = fingerprintOf({ draft: v.draft, questions: v.answers.map(([question, answer]) => ({ question, answer })) });
+  assert.equal(fromVersion, fingerprintOf(now));
+  assert.equal(approvalState(db, p.id).state, 'approved', 'keeping versions does not touch the approval');
+});
+
+// ── the migration ─────────────────────────────────────────────────────────
+
+test('the migration gives each existing proposal with a draft its version 1, as it stands today', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ub-versions-'));
+  try {
+    // A database from before this migration: every file but 012.
+    const older = join(dir, 'older');
+    const all = join(dir, 'all');
+    mkdirSync(older);
+    mkdirSync(all);
+    for (const name of migrationFiles()) {
+      copyFileSync(join(MIGRATIONS_DIR, name), join(all, name));
+      if (name < '012_') copyFileSync(join(MIGRATIONS_DIR, name), join(older, name));
+    }
+    const db = freshDb(join(dir, 'app.sqlite'), older);
+    assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'proposal_version'").get(), undefined);
+
+    const aiOnly = Number(db.prepare('INSERT INTO proposal (opportunity_id, draft, drafted_at) VALUES (?, ?, ?)').run(addJob(db), 'The AI draft.', '2026-11-01T10:00:00.000Z').lastInsertRowid);
+    db.prepare('INSERT INTO proposal_question (proposal_id, question, answer) VALUES (?, ?, ?)').run(aiOnly, 'First?', 'Yes.');
+    db.prepare('INSERT INTO proposal_question (proposal_id, question, answer) VALUES (?, ?, NULL)').run(aiOnly, 'Second?');
+    const edited = Number(
+      db.prepare('INSERT INTO proposal (opportunity_id, draft, drafted_at, edited_at) VALUES (?, ?, ?, ?)').run(addJob(db), 'Dane rewrote it.', '2026-11-02T10:00:00.000Z', '2026-11-03T10:00:00.000Z').lastInsertRowid,
+    );
+    const noDraft = Number(db.prepare("INSERT INTO proposal (opportunity_id, draft_problem) VALUES (?, 'overloaded')").run(addJob(db)).lastInsertRowid);
+
+    assert.deepEqual(runMigrations(db, all), ['012_proposal_version.sql']);
+
+    const [a] = proposalVersions(db, aiOnly);
+    assert.deepEqual(
+      { no: a.versionNo, draft: a.draft, answers: a.answers, change: a.change, author: a.author, at: a.savedAt },
+      { no: 1, draft: 'The AI draft.', answers: [['First?', 'Yes.'], ['Second?', '']], change: 'first-draft', author: 'AI', at: '2026-11-01T10:00:00.000Z' },
+    );
+    const [e] = proposalVersions(db, edited);
+    assert.deepEqual(
+      { no: e.versionNo, draft: e.draft, answers: e.answers, change: e.change, author: e.author, at: e.savedAt },
+      { no: 1, draft: 'Dane rewrote it.', answers: [], change: 'draft', author: 'Dane', at: '2026-11-03T10:00:00.000Z' },
+    );
+    assert.equal(versionCount(db, noDraft), 0, 'a proposal with no draft starts with no history');
+
+    // History carries on from there.
+    assert.ok(saveDraft(db, aiOnly, 'Now my own words.'));
+    assert.deepEqual(proposalVersions(db, aiOnly).map((v) => v.versionNo), [1, 2]);
+    db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
