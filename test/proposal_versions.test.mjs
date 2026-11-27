@@ -12,7 +12,7 @@ import { saveJob } from '../lib/jobs.ts';
 import { DEFAULT_SETTINGS, savePreferences } from '../lib/preferences.ts';
 import { addQuestion, answerQuestion, DRAFT_MODEL, getProposal, openProposal, saveDraft, writeDraft } from '../lib/draft.ts';
 import { approve, approvalState, fingerprintOf } from '../lib/approval.ts';
-import { latestVersion, proposalVersions } from '../lib/proposalVersions.ts';
+import { latestVersion, proposalVersions, versionCount as countVersions } from '../lib/proposalVersions.ts';
 import { markSent } from '../lib/sent.ts';
 import { compareVersions, defaultPair, versionFingerprint, versionHistory } from '../lib/versionHistory.ts';
 
@@ -399,13 +399,57 @@ test('comparing two versions: the draft and each answer line up old on the left,
   assert.equal(versionFingerprint(h.versions[0]), fingerprintOf(getProposal(db, p.id)));
 });
 
+test('two questions with the same wording: each answer is compared with its own question, not the other one', async () => {
+  const db = freshDb();
+  const p = await answeredProposal(db);
+  assert.ok(addQuestion(db, p.id, 'Anything else?'));
+  assert.ok(addQuestion(db, p.id, 'Anything else?'));
+  const [first, second] = getProposal(db, p.id).questions.slice(-2);
+  assert.ok(answerQuestion(db, p.id, first.id, 'A'));
+  const before = versionHistory(db, p.id).versions[0].versionNo;
+  assert.ok(answerQuestion(db, p.id, second.id, 'B'));
+  const h = versionHistory(db, p.id);
+  const cmp = compareVersions(h, before, h.versions[0].versionNo);
+  const alike = cmp.answers.filter((a) => a.question === 'Anything else?');
+  assert.equal(alike.length, 2, 'both questions are shown');
+  assert.deepEqual(alike[0].rows, [{ left: { text: 'A', kind: 'same' }, right: { text: 'A', kind: 'same' } }], 'the first answer did not change');
+  assert.deepEqual(alike[1].rows, [{ left: null, right: { text: 'B', kind: 'added' } }], 'only the second answer was added');
+  assert.deepEqual(alike.map((a) => a.in), ['both', 'both']);
+});
+
+test('a send whose approval matches no saved version is still reported, never dropped', async () => {
+  const db = freshDb();
+  const p = await answeredProposal(db);
+  // As if approved and sent before versions were kept, then edited: the
+  // approval's fingerprint matches none of the saved versions.
+  const approvalId = Number(
+    db
+      .prepare("INSERT INTO approval (proposal_id, fingerprint, approved_draft, approved_answers) VALUES (?, ?, 'Old words.', '[]')")
+      .run(p.id, 'f'.repeat(64)).lastInsertRowid,
+  );
+  db.prepare('INSERT INTO sent_record (proposal_id, approval_id) VALUES (?, ?)').run(p.id, approvalId);
+  const h = versionHistory(db, p.id);
+  assert.ok(h.versions.every((v) => v.sent.length === 0 && v.approvals.length === 0));
+  assert.deepEqual(h.unmatchedApprovals.map((a) => a.approvalId), [approvalId]);
+  assert.deepEqual(h.unmatchedSent.map((s) => s.approvalId), [approvalId]);
+  assert.match(h.unmatchedSent[0].confirmedAt, /^\d{4}-\d\d-\d\dT/);
+});
+
+test('the workspace count of versions comes from counting rows, and matches the history', async () => {
+  const db = freshDb();
+  const p = await answeredProposal(db);
+  assert.ok(saveDraft(db, p.id, 'My own words.'));
+  assert.equal(countVersions(db, p.id), versionHistory(db, p.id).versions.length);
+  assert.equal(countVersions(db, 999_999), 0);
+});
+
 test('a version number that is not this proposal’s gives nothing, never another proposal’s text', async () => {
   const db = freshDb();
   const one = await answeredProposal(db);
   const other = await openProposal(db, addJob(db), fakeModel('Text of a different proposal.'));
   assert.equal(compareVersions(versionHistory(db, other.id), 1, 3), undefined, 'the other proposal has only version 1');
   assert.equal(compareVersions(versionHistory(db, one.id), 1, 99), undefined);
-  assert.deepEqual(versionHistory(db, 999_999), { versions: [], unmatchedApprovals: [] }, 'an unknown proposal has no history');
+  assert.deepEqual(versionHistory(db, 999_999), { versions: [], unmatchedApprovals: [], unmatchedSent: [] }, 'an unknown proposal has no history');
   assert.equal(defaultPair(versionHistory(db, 999_999)), undefined);
 });
 

@@ -1,7 +1,7 @@
 // The line-by-line comparison behind the version history's side-by-side view (UB-29).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hasChanges, lineDiff } from '../lib/diff.ts';
+import { hasChanges, lineDiff, MAX_DIFF_CELLS } from '../lib/diff.ts';
 
 const same = (text) => ({ text, kind: 'same' });
 const removed = (text) => ({ text, kind: 'removed' });
@@ -71,4 +71,30 @@ test('unchanged lines stay lined up around several changes, and blank lines coun
 
 test('Windows line endings compare the same as plain ones', () => {
   assert.equal(hasChanges(lineDiff('a\r\nb', 'a\nb')), false);
+});
+
+test('the longest draft the app allows (10,000 lines, every one changed) finishes quickly, shown whole as removed and added', () => {
+  const before = Array.from({ length: 10_000 }, (_, i) => `old ${i}`).join('\n');
+  const after = Array.from({ length: 10_000 }, (_, i) => `new ${i}`).join('\n');
+  const started = performance.now();
+  const rows = lineDiff(before, after);
+  assert.ok(performance.now() - started < 1000, 'under a second');
+  assert.ok(10_000 * 10_000 > MAX_DIFF_CELLS, 'too big for the table, so it takes the plain view');
+  assert.equal(rows.length, 10_000);
+  assert.deepEqual(rows[0], { left: { text: 'old 0', kind: 'removed' }, right: { text: 'new 0', kind: 'added' } });
+  assert.ok(rows.every((r) => r.left?.kind === 'removed' && r.right?.kind === 'added'));
+});
+
+test('a long text with one line changed: the shared start and end line up and only that line is marked, quickly', () => {
+  const lines = Array.from({ length: 10_000 }, (_, i) => `line ${i}`);
+  const changed = [...lines];
+  changed[5_000] = 'a new middle line';
+  const started = performance.now();
+  const rows = lineDiff(lines.join('\n'), changed.join('\n'));
+  assert.ok(performance.now() - started < 1000, 'under a second');
+  assert.equal(rows.length, 10_000);
+  const marked = rows.filter((r) => r.left?.kind !== 'same' || r.right?.kind !== 'same');
+  assert.deepEqual(marked, [{ left: { text: 'line 5000', kind: 'removed' }, right: { text: 'a new middle line', kind: 'added' } }]);
+  assert.deepEqual(rows[4_999], { left: { text: 'line 4999', kind: 'same' }, right: { text: 'line 4999', kind: 'same' } });
+  assert.deepEqual(rows[9_999], { left: { text: 'line 9999', kind: 'same' }, right: { text: 'line 9999', kind: 'same' } });
 });

@@ -46,6 +46,8 @@ export type VersionHistory = {
   versions: MarkedVersion[];
   /** Approvals that match no saved version (say, one made before versions were kept). */
   unmatchedApprovals: ApprovalMark[];
+  /** Sends whose approval matches no saved version, so no version in the list carries them. */
+  unmatchedSent: SentMark[];
 };
 
 const CANCELLED_WHY: Record<string, string> = {
@@ -102,12 +104,16 @@ export function versionHistory(db: DatabaseSync, proposalId: number): VersionHis
       unmatchedApprovals.push(mark);
     }
   }
+  const unmatchedSent: SentMark[] = [];
   for (const row of sends) {
     const approvalId = Number(row.approval_id);
-    byApproval.get(approvalId)?.sent.push({ sentId: Number(row.id), approvalId, confirmedAt: String(row.confirmed_at) });
+    const mark: SentMark = { sentId: Number(row.id), approvalId, confirmedAt: String(row.confirmed_at) };
+    const version = byApproval.get(approvalId);
+    if (version) version.sent.push(mark);
+    else unmatchedSent.push(mark);
   }
 
-  return { versions: versions.reverse(), unmatchedApprovals };
+  return { versions: versions.reverse(), unmatchedApprovals, unmatchedSent };
 }
 
 export type AnswerDiff = {
@@ -135,15 +141,18 @@ export function compareVersions(history: VersionHistory, a: number, b: number): 
   if (!va || !vb) return undefined;
   const [older, newer] = va.versionNo <= vb.versionNo ? [va, vb] : [vb, va];
 
-  const oldAnswers = new Map(older.answers);
-  const newAnswers = new Map(newer.answers);
-  const answers: AnswerDiff[] = newer.answers.map(([question, answer]) => ({
-    question,
-    in: oldAnswers.has(question) ? 'both' : 'newer',
-    rows: lineDiff(oldAnswers.get(question) ?? '', answer),
-  }));
-  for (const [question, answer] of older.answers) {
-    if (!newAnswers.has(question)) answers.push({ question, in: 'older', rows: lineDiff(answer, '') });
+  // A version keeps its answers in the order the questions were added, and a
+  // question is never taken away, so the same position is the same question.
+  // (Matching by wording would mix up two questions that read alike.)
+  const answers: AnswerDiff[] = [];
+  for (let k = 0; k < Math.max(older.answers.length, newer.answers.length); k++) {
+    const before = older.answers[k];
+    const after = newer.answers[k];
+    answers.push({
+      question: (after ?? before)[0],
+      in: before && after ? 'both' : after ? 'newer' : 'older',
+      rows: lineDiff(before?.[1] ?? '', after?.[1] ?? ''),
+    });
   }
   return { older, newer, draft: lineDiff(older.draft, newer.draft), answers };
 }

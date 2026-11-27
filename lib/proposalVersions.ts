@@ -66,6 +66,11 @@ export function proposalVersions(db: DatabaseSync, proposalId: number): Proposal
     .map(toVersion);
 }
 
+/** How many versions a proposal has, without reading their text. */
+export function versionCount(db: DatabaseSync, proposalId: number): number {
+  return Number(db.prepare('SELECT COUNT(*) AS n FROM proposal_version WHERE proposal_id = ?').get(proposalId)?.n ?? 0);
+}
+
 /** The proposal's newest version, or undefined when it has none yet. */
 export function latestVersion(db: DatabaseSync, proposalId: number): ProposalVersion | undefined {
   const row = db

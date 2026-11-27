@@ -15,3 +15,11 @@ new on the right. Removed lines are shown in red, added lines in green, and
 unchanged lines line up, for the draft and for each screening answer. The
 page only reads and never changes anything. A test checks that opening it
 writes nothing to the database.
+
+After review sent it back, three things were fixed. Two screening questions
+with the same wording no longer get their answers mixed up in the compare
+view. A very long draft no longer uses a huge amount of memory to compare:
+lines the two versions share at the start and end are set aside first, and a
+rewrite too big to line up is shown as all removed and all added. And a
+proposal sent before versions were kept now still says it was sent, instead
+of the mark quietly disappearing.

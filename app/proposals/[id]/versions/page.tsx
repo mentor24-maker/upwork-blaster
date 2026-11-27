@@ -41,8 +41,8 @@ function Side({ side }: { side: DiffSide | null }) {
   );
 }
 
-function DiffTable({ rows, older, newer }: { rows: DiffRow[]; older: number; newer: number }) {
-  if (rows.length === 0) return <p style={muted}>Empty in both versions.</p>;
+function DiffTable({ rows, older, newer, empty = 'Empty in both versions.' }: { rows: DiffRow[]; older: number; newer: number; empty?: string }) {
+  if (rows.length === 0) return <p style={muted}>{empty}</p>;
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', border: '1px solid #ccc' }}>
       <thead>
@@ -145,6 +145,12 @@ export default async function VersionsPage({
               version (made before versions were kept).
             </p>
           ) : null}
+          {history.unmatchedSent.length > 0 ? (
+            <p data-mark="sent-unmatched">
+              <strong>✉ Sent</strong>, but the version you sent is not in this list (approved before versions were kept):{' '}
+              {history.unmatchedSent.map((s) => `you marked it sent ${when(s.confirmedAt)} Mountain time`).join('; ')}.
+            </p>
+          ) : null}
 
           <section id="compare" style={{ marginTop: '1.5rem' }}>
             <h2>Compare two versions</h2>
@@ -190,7 +196,18 @@ export default async function VersionsPage({
                         <span style={muted}> (question gone by version {comparison.newer.versionNo})</span>
                       ) : null}
                     </p>
-                    <DiffTable rows={ans.rows} older={comparison.older.versionNo} newer={comparison.newer.versionNo} />
+                    <DiffTable
+                      rows={ans.rows}
+                      older={comparison.older.versionNo}
+                      newer={comparison.newer.versionNo}
+                      empty={
+                        ans.in === 'newer'
+                          ? `Not asked yet in version ${comparison.older.versionNo}, and not answered yet in version ${comparison.newer.versionNo}.`
+                          : ans.in === 'older'
+                            ? `It had no answer in version ${comparison.older.versionNo}.`
+                            : undefined
+                      }
+                    />
                   </div>
                 ))}
               </>
