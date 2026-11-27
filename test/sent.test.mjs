@@ -244,10 +244,14 @@ test('only lib/sent.ts writes a send, only the signed-in route calls it, and nei
   assert.deepEqual(callers, ['app/api/sent/route.ts']);
   const route = readFileSync(join(REPO_DIR, 'app/api/sent/route.ts'), 'utf8');
   assert.match(route, /if \(!isSignedIn\(request\)\) return new Response\(null, \{ status: 401/);
-  for (const f of ['lib/sent.ts', 'app/api/sent/route.ts', 'app/proposals/[id]/review/copy_button.tsx']) {
+  for (const f of ['lib/sent.ts', 'app/api/sent/route.ts', 'app/api/copied/route.ts']) {
     const src = readFileSync(join(REPO_DIR, f), 'utf8');
     assert.doesNotMatch(src, /\bfetch\s*\(|upwork\.com/i, `${f} has no connection to Upwork`);
   }
+  // The Copy button's one request is to the app itself, to note the copy in the activity log.
+  const button = readFileSync(join(REPO_DIR, 'app/proposals/[id]/review/copy_button.tsx'), 'utf8');
+  assert.doesNotMatch(button, /upwork\.com/i, 'the Copy button names no Upwork address');
+  assert.deepEqual(button.match(/\bfetch\s*\([^,)]*/g), ["fetch('/api/copied'"], 'its only request goes to the app’s own /api/copied');
 });
 
 test('the review screen offers Copy and "I sent it" only inside the approved-now branch', () => {

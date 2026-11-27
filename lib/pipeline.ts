@@ -18,6 +18,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { latestSent } from './sent.ts';
 import { aiSpendSummary, type SpendSummary } from './ai/usage.ts';
+import { logProposalActivity } from './activity.ts';
 
 export const PIPELINE_STATUSES = ['sent', 'replied', 'interviewing', 'won', 'lost'] as const;
 export type PipelineStatus = (typeof PIPELINE_STATUSES)[number];
@@ -153,6 +154,9 @@ function moveJobInside(db: DatabaseSync, proposalId: number, status: PipelineSta
   db.prepare('INSERT INTO pipeline_move (proposal_id, status) VALUES (?, ?)').run(proposalId, status);
   const card = pipelineCard(db, proposalId);
   if (card?.status !== status) throw new Error(`the move of proposal ${proposalId} to "${status}" did not read back after saving`);
+  logProposalActivity(db, proposalId, 'Dane', 'pipeline-moved', (name) =>
+    `You moved ${name} on the Pipeline board from ${PIPELINE_LABELS[before?.status ?? 'sent']} to ${PIPELINE_LABELS[status]}.`,
+  );
   return { ok: true, card };
 }
 
@@ -170,6 +174,7 @@ function addNoteInside(db: DatabaseSync, proposalId: number, text: string): Pipe
   if (!card?.notes.some((n) => n.id === id && n.note === text)) {
     throw new Error(`the note on proposal ${proposalId} did not read back after saving`);
   }
+  logProposalActivity(db, proposalId, 'Dane', 'pipeline-note', (name) => `You added a note to ${name} on the Pipeline board.`);
   return { ok: true, card };
 }
 
@@ -188,6 +193,9 @@ function setNextActionInside(db: DatabaseSync, proposalId: number, text: string 
   ).run(proposalId, text);
   const card = pipelineCard(db, proposalId);
   if (!card || card.nextAction !== text) throw new Error(`the next action on proposal ${proposalId} did not read back after saving`);
+  logProposalActivity(db, proposalId, 'Dane', 'pipeline-next', (name) =>
+    text === null ? `You cleared the next action on ${name}.` : `You set the next action on ${name}.`,
+  );
   return { ok: true, card };
 }
 

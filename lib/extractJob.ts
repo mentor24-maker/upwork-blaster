@@ -33,6 +33,7 @@ import { recordAiUsage } from './ai/usage.ts';
 import { MAX_FIELD, type JobType } from './jobs.ts';
 import { withoutOrders } from './orders.ts';
 import { paymentStatus } from './score.ts';
+import { logJobActivity } from './activity.ts';
 
 /** Small, cheap and priced (lib/ai/pricing.ts): reading fields needs no more. */
 export const EXTRACT_MODEL = 'claude-haiku-5-5';
@@ -206,6 +207,7 @@ export async function fillJobFromPost(db: DatabaseSync, id: number, ai?: AiDeps)
     db.prepare(
       `UPDATE opportunity SET extraction_problem = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
     ).run(result.problem.slice(0, MAX_FIELD), id);
+    logJobActivity(db, id, 'AI', 'job-extract-failed', (name) => `The AI could not fill in the blanks on ${name}; the job page says why.`);
     return result;
   }
   const f = result.fields;
@@ -222,5 +224,9 @@ export async function fillJobFromPost(db: DatabaseSync, id: number, ai?: AiDeps)
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = ?`,
   ).run(f.budget, f.jobType, f.postedAt, f.client, f.connectsCost, id);
+  const found = (Object.keys(f) as (keyof ExtractedFields)[]).filter((k) => f[k] !== null).length;
+  logJobActivity(db, id, 'AI', 'job-extracted', (name) =>
+    found === 0 ? `The AI read ${name} and found nothing to fill in.` : `The AI read ${name} and found ${found} detail${found === 1 ? '' : 's'} in the post (never over what you typed).`,
+  );
   return result;
 }

@@ -32,6 +32,7 @@ import { approvedEvidence } from './portfolio.ts';
 import type { Settings, WeightKey } from './preferences.ts';
 import { currentPreferences, DEFAULT_SETTINGS, WEIGHT_KEYS, WEIGHT_LABELS } from './preferences.ts';
 import { ordersIn } from './orders.ts';
+import { logJobActivity } from './activity.ts';
 
 /** Which rules scored a job; change it whenever the rules below change. */
 export const SCORER_VERSION = 'rules-2';
@@ -640,7 +641,11 @@ export function scoreJob(db: DatabaseSync, opportunityId: number): SavedEvaluati
   if (!job) return undefined;
   const prefs = currentPreferences(db);
   const ev = evaluateJob(job, prefs?.settings ?? DEFAULT_SETTINGS, prefs?.version ?? null, approvedEvidence(db));
-  return saveEvaluation(db, ev);
+  const saved = saveEvaluation(db, ev);
+  logJobActivity(db, opportunityId, 'app', 'job-scored', (name) =>
+    saved.excluded ? `The app set ${name} apart: it matches something you do not take.` : `The app scored ${name} ${saved.score} out of 100.`,
+  );
+  return saved;
 }
 
 /**

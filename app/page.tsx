@@ -30,6 +30,9 @@ export default function HomePage() {
           <a href="/portfolio">Portfolio</a>
         </li>
         <li>
+          <a href="/activity">Activity</a>: what you and the AI did, newest first
+        </li>
+        <li>
           <a href="/api/export">Export my data</a>: everything you have saved here, as one JSON file
         </li>
       </ul>

@@ -12,6 +12,7 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite';
+import { logActivity } from './activity.ts';
 
 /** The five ranking dimensions of the hand-off's §6, in its order. */
 export const WEIGHT_KEYS = ['fit', 'budget', 'clarity', 'client', 'interest'] as const;
@@ -135,7 +136,9 @@ export function weightsTotal(weights: Weights): number {
 /** Save the settings as a new version and return its number. Old versions are never changed. */
 export function savePreferences(db: DatabaseSync, settings: Settings): number {
   const result = db.prepare('INSERT INTO preferences (settings) VALUES (?)').run(JSON.stringify(settings));
-  return Number(result.lastInsertRowid);
+  const version = Number(result.lastInsertRowid);
+  logActivity(db, { actor: 'Dane', kind: 'preferences-saved', summary: `You saved your preferences (version ${version}).` });
+  return version;
 }
 
 /** The version in force (the newest), or undefined before the first save. */

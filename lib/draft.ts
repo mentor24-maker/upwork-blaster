@@ -27,6 +27,7 @@ import { recordAiUsage } from './ai/usage.ts';
 import { quotePost, type AiDeps } from './extractJob.ts';
 import { getJob, MAX_FIELD, type SavedJob } from './jobs.ts';
 import { approvedEvidence, STATUS_LABELS, type SavedEntry } from './portfolio.ts';
+import { logProposalActivity } from './activity.ts';
 
 /** Writing a proposal Dane may send needs a stronger model than reading fields. Priced in lib/ai/pricing.ts. */
 export const DRAFT_MODEL = 'claude-sonnet-5-5';
@@ -226,15 +227,21 @@ export async function writeDraft(db: DatabaseSync, proposalId: number, ai?: AiDe
   const result = await writeDraftText(job, evidence, deps);
 
   if (result.ok) {
-    db.prepare(
+    const res = db.prepare(
       `UPDATE proposal SET draft = ?, draft_problem = NULL, evidence_ids = ?,
          drafted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        WHERE id = ? AND draft IS NULL`,
     ).run(result.text, JSON.stringify(evidence.map((e) => e.id)), proposalId);
+    if (Number(res.changes) === 1) {
+      logProposalActivity(db, proposalId, 'AI', 'draft-created', (name) => `The AI wrote the first draft of your proposal for ${name}.`);
+    }
   } else {
-    db.prepare(
+    const res = db.prepare(
       `UPDATE proposal SET draft_problem = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND draft IS NULL`,
     ).run(result.problem.slice(0, MAX_FIELD), proposalId);
+    if (Number(res.changes) === 1) {
+      logProposalActivity(db, proposalId, 'AI', 'draft-failed', (name) => `The AI could not write a draft for ${name}; the proposal page says why.`);
+    }
   }
   return getProposal(db, proposalId);
 }
@@ -250,18 +257,27 @@ export async function openProposal(db: DatabaseSync, opportunityId: number, ai?:
   if (!job) return undefined;
   let proposal = proposalForJob(db, opportunityId);
   if (!proposal) {
+    let opened: { id: number; questions: number } | null = null;
     db.exec('BEGIN IMMEDIATE');
     try {
       const res = db.prepare('INSERT OR IGNORE INTO proposal (opportunity_id) VALUES (?)').run(opportunityId);
       if (Number(res.changes) === 1) {
         const id = Number(res.lastInsertRowid);
         const add = db.prepare('INSERT INTO proposal_question (proposal_id, question) VALUES (?, ?)');
-        for (const q of screeningQuestionsIn(job.description)) add.run(id, q);
+        const questions = screeningQuestionsIn(job.description);
+        for (const q of questions) add.run(id, q);
+        opened = { id, questions: questions.length };
       }
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');
       throw err;
+    }
+    // Written after COMMIT, so a log line that fails can never undo the save.
+    if (opened) {
+      const n = opened.questions;
+      const found = n === 0 ? '' : ` with the ${n} screening question${n === 1 ? '' : 's'} from the post`;
+      logProposalActivity(db, opened.id, 'Dane', 'proposal-opened', (name) => `You opened a proposal for ${name}${found}.`);
     }
     proposal = proposalForJob(db, opportunityId);
     if (!proposal) throw new Error(`the proposal for job ${opportunityId} did not read back after saving`);
@@ -324,7 +340,9 @@ export function saveDraft(db: DatabaseSync, proposalId: number, draft: string): 
        WHERE id = ?`,
     )
     .run(draft, proposalId);
-  return Number(res.changes) === 1;
+  if (Number(res.changes) !== 1) return false;
+  logProposalActivity(db, proposalId, 'Dane', 'draft-edited', (name) => `You edited the draft for ${name}.`);
+  return true;
 }
 
 /** Save Dane's answer to one of a proposal's questions. False when there is no such question. */
@@ -335,7 +353,11 @@ export function answerQuestion(db: DatabaseSync, proposalId: number, questionId:
        WHERE id = ? AND proposal_id = ?`,
     )
     .run(answer, questionId, proposalId);
-  return Number(res.changes) === 1;
+  if (Number(res.changes) !== 1) return false;
+  logProposalActivity(db, proposalId, 'Dane', 'answer-saved', (name) =>
+    answer === null ? `You cleared an answer on the proposal for ${name}.` : `You answered a screening question on the proposal for ${name}.`,
+  );
+  return true;
 }
 
 /** Add a screening question by hand. False when there is no such proposal or it already has the most. */
@@ -343,5 +365,6 @@ export function addQuestion(db: DatabaseSync, proposalId: number, question: stri
   const p = getProposal(db, proposalId);
   if (!p || p.questions.length >= MAX_QUESTIONS) return false;
   db.prepare('INSERT INTO proposal_question (proposal_id, question) VALUES (?, ?)').run(proposalId, question);
+  logProposalActivity(db, proposalId, 'Dane', 'question-added', (name) => `You added a screening question to the proposal for ${name}.`);
   return true;
 }
