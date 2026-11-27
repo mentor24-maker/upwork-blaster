@@ -21,11 +21,14 @@ import {
   MAX_NEXT_ACTION,
   MAX_NOTE,
   moveJob,
+  outcomeLines,
   pipelineCard,
+  pipelineOutcomes,
   PIPELINE_STATUSES,
   readPipelineForm,
   setNextAction,
 } from '../lib/pipeline.ts';
+import { recordAiUsage } from '../lib/ai/usage.ts';
 import { gate } from '../lib/gate.ts';
 import { createSessionToken, SESSION_COOKIE } from '../lib/session.ts';
 import { POST as postPipeline } from '../app/api/pipeline/route.ts';
@@ -313,4 +316,104 @@ test('only lib/pipeline.ts writes the board, only the signed-in route calls it, 
   for (const f of ['lib/pipeline.ts', 'app/api/pipeline/route.ts']) {
     assert.doesNotMatch(readFileSync(join(REPO_DIR, f), 'utf8'), /\bfetch\s*\(|upwork\.com/i, `${f} has no connection to Upwork`);
   }
+});
+
+// ── Outcomes (task 6.4): counted from his own moves, spend kept apart ────
+
+test('outcomes count each job once by the rule: ever reached for Replied and Interviewing, now in for Won and Lost', async () => {
+  const db = freshDb();
+  const notSent = await approvedProposal(db);
+  const backToSent = await sentProposal(db);
+  const lostOne = await sentProposal(db);
+  const unWon = await sentProposal(db);
+  const untouched = await sentProposal(db);
+
+  // Sent → Replied → Sent, twice over: replied once, not twice.
+  for (const s of ['replied', 'sent', 'replied', 'sent']) assert.equal(moveJob(db, backToSent.id, s).ok, true);
+  for (const s of ['replied', 'interviewing', 'lost']) assert.equal(moveJob(db, lostOne.id, s).ok, true);
+  for (const s of ['interviewing', 'won', 'interviewing']) assert.equal(moveJob(db, unWon.id, s).ok, true);
+
+  const o = pipelineOutcomes(db);
+  assert.deepEqual(
+    { sent: o.sent, replied: o.replied, interviewing: o.interviewing, won: o.won, lost: o.lost },
+    { sent: 4, replied: 2, interviewing: 2, won: 0, lost: 1 },
+  );
+  assert.equal(o.replyRate, 50);
+  assert.equal(o.winRate, 0);
+  assert.equal(pipelineCard(db, untouched.id).status, 'sent');
+  assert.equal(pipelineCard(db, notSent.id), undefined, 'the approved-but-unsent proposal is not on the board');
+
+  // Won now, for real: counted.
+  assert.equal(moveJob(db, unWon.id, 'won').ok, true);
+  const after = pipelineOutcomes(db);
+  assert.equal(after.won, 1);
+  assert.equal(after.winRate, 25);
+
+  const lines = outcomeLines(after);
+  assert.deepEqual(lines.measured, [
+    'Sent: 4 · Replied: 2 · Interviewing: 2 · Won: 1 · Lost: 1',
+    'Reply rate: 50% (2 of 4)',
+    'Win rate: 25% (1 of 4)',
+  ]);
+  for (const line of lines.measured) assert.doesNotMatch(line, /\$|spend|price/i, 'no estimate in a measured line');
+  for (const line of lines.estimated) assert.doesNotMatch(line, /rate:|Replied|Won/, 'no measured count in an estimated line');
+});
+
+test('a proposal approved but never marked sent is not counted anywhere', async () => {
+  const db = freshDb();
+  const p = await approvedProposal(db);
+  const o = pipelineOutcomes(db);
+  assert.deepEqual(
+    { sent: o.sent, replied: o.replied, interviewing: o.interviewing, won: o.won, lost: o.lost },
+    { sent: 0, replied: 0, interviewing: 0, won: 0, lost: 0 },
+  );
+  assert.deepEqual(moveJob(db, p.id, 'won'), { ok: false, reason: 'not-sent' }, 'and it cannot be moved onto the board');
+  assert.equal(pipelineOutcomes(db).won, 0);
+});
+
+test('with nothing sent the rates are absent and the section says "No proposals sent yet."', async () => {
+  const db = freshDb();
+  await approvedProposal(db); // AI calls were made, but nothing was sent
+  const o = pipelineOutcomes(db);
+  assert.equal(o.sent, 0);
+  assert.equal(o.replyRate, null);
+  assert.equal(o.winRate, null);
+  assert.equal(o.spendPerSentUsd, null, 'no divide-by-zero');
+  const lines = outcomeLines(o);
+  assert.deepEqual(lines, { measured: ['No proposals sent yet.'], estimated: [] });
+  assert.doesNotMatch(JSON.stringify(lines), /NaN|Infinity/);
+});
+
+test('the AI spend per sent proposal is an estimate from priced calls, and an unpriced call is named, not counted as $0', async () => {
+  const db = freshDb();
+  await sentProposal(db);
+  await sentProposal(db);
+  db.prepare('DELETE FROM ai_usage').run(); // replace the drafting calls with made-up ones
+  const MILLION = 1_000_000;
+  const usage = { promptTokens: MILLION, completionTokens: 0, cachedTokens: 0, totalTokens: MILLION };
+  recordAiUsage(db, { provider: 'anthropic', model: 'claude-sonnet-5-5', feature: 'draft', usage }); // $2.00
+  recordAiUsage(db, { provider: 'anthropic', model: 'claude-sonnet-5-5', feature: 'draft', usage }); // $2.00
+
+  let o = pipelineOutcomes(db);
+  assert.equal(o.spendPerSentUsd, 2);
+  assert.deepEqual(outcomeLines(o).estimated, [
+    'AI spend per sent proposal: $2.00 ($4.00 across 2 calls, ÷ 2 sent)',
+    'Worked out from the price table in the app (lib/ai/pricing.ts), not from a bill.',
+  ]);
+
+  recordAiUsage(db, { provider: 'anthropic', model: 'claude-mystery-9', feature: 'draft', usage });
+  o = pipelineOutcomes(db);
+  assert.equal(o.spendPerSentUsd, 2, 'the unpriced call is not added as $0 or as a guess');
+  assert.equal(o.spend.unpricedCalls, 1);
+  const [perSent, why] = outcomeLines(o).estimated;
+  assert.equal(perSent, 'AI spend per sent proposal: $2.00 ($4.00 across 2 calls, ÷ 2 sent)');
+  assert.match(why, /1 call not priced \(claude-mystery-9 has no price on record\), so the real total is higher\./);
+});
+
+test('the board page shows the outcomes under "Measured: from your own moves" and the spend under "Estimated"', () => {
+  const page = readFileSync(join(REPO_DIR, 'app/pipeline/page.tsx'), 'utf8');
+  assert.match(page, /outcomeLines\(pipelineOutcomes\(db\)\)/);
+  assert.match(page, /<strong>Measured: from your own moves<\/strong>/);
+  assert.match(page, /<strong>Estimated<\/strong>/);
+  assert.ok(page.indexOf('data-pipeline="outcomes"') < page.indexOf('data-pipeline-column'), 'the Outcomes section sits above the columns');
 });
