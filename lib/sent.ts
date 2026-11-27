@@ -21,6 +21,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { approvalState, isFingerprint, type SavedApproval } from './approval.ts';
+import { logProposalActivity } from './activity.ts';
 
 export type SentRecord = {
   id: number;
@@ -109,5 +110,6 @@ function markSentInside(db: DatabaseSync, proposalId: number, seenFingerprint: s
   if (!saved || saved.approvalId !== state.approval.id) {
     throw new Error(`the "I sent it" mark on proposal ${proposalId} did not read back after saving`);
   }
+  logProposalActivity(db, proposalId, 'Dane', 'proposal-sent', (name) => `You marked the proposal for ${name} as sent on Upwork.`);
   return { ok: true, sent: saved, already: false };
 }

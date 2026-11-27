@@ -29,6 +29,9 @@ export default function HomePage() {
         <li>
           <a href="/portfolio">Portfolio</a>
         </li>
+        <li>
+          <a href="/activity">Activity</a>: what you and the AI did, newest first
+        </li>
       </ul>
       <p id="ai-spend">{spendLine(spend)}</p>
     </main>

@@ -128,11 +128,11 @@ export default async function ReviewPage({
             “I sent it”.
           </p>
           <p>
-            <CopyButton text={toCopy.draft} label="the proposal text" />
+            <CopyButton text={toCopy.draft} label="the proposal text" proposal={proposal.id} part="text" />
           </p>
           {toCopy.answers.map((a, i) => (
             <p key={i}>
-              <CopyButton text={a.answer} label={`answer ${i + 1}`} /> <span style={muted}>({a.question})</span>
+              <CopyButton text={a.answer} label={`answer ${i + 1}`} proposal={proposal.id} part={`answer-${i + 1}`} /> <span style={muted}>({a.question})</span>
             </p>
           ))}
           {sentThisVersion ? null : (

@@ -13,6 +13,7 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite';
+import { logJobActivity } from './activity.ts';
 
 export type JobType = 'fixed' | 'hourly';
 
@@ -160,7 +161,9 @@ export function saveJob(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(job.url, job.title, job.description, job.budget, job.jobType, job.postedAt, job.client, job.connectsCost);
-    return { ok: true, id: Number(result.lastInsertRowid) };
+    const id = Number(result.lastInsertRowid);
+    logJobActivity(db, id, 'Dane', 'job-saved', (name) => `You saved the job ${name}.`);
+    return { ok: true, id };
   } catch (err) {
     // Two saves of the same link at once: the table's UNIQUE rule is the last word.
     if (/UNIQUE/.test((err as Error).message)) {
