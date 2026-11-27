@@ -13,6 +13,8 @@ import { DEFAULT_SETTINGS, savePreferences } from '../lib/preferences.ts';
 import { addQuestion, answerQuestion, DRAFT_MODEL, getProposal, openProposal, saveDraft, writeDraft } from '../lib/draft.ts';
 import { approve, approvalState, fingerprintOf } from '../lib/approval.ts';
 import { latestVersion, proposalVersions } from '../lib/proposalVersions.ts';
+import { markSent } from '../lib/sent.ts';
+import { compareVersions, defaultPair, versionFingerprint, versionHistory } from '../lib/versionHistory.ts';
 
 const AI_DRAFT = 'Hello, I would build your sales dashboard in Next.js and keep you posted every week.';
 const POST_TEXT = 'We need a sales dashboard in Next.js.\n\nScreening questions:\n1. How soon can you start?\n2. Have you used Postgres?';
@@ -284,4 +286,150 @@ test('the migration gives each existing proposal with a draft its version 1, as 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── reading the history (UB-29) ───────────────────────────────────────────
+
+/** A proposal with every question answered, ready to approve. */
+async function answeredProposal(db) {
+  const p = await openProposal(db, addJob(db), fakeModel());
+  for (const q of p.questions) assert.ok(answerQuestion(db, p.id, q.id, 'Next Monday.'));
+  return getProposal(db, p.id);
+}
+const rowCounts = (db) =>
+  Object.fromEntries(
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+      .all()
+      .map(({ name }) => [name, db.prepare(`SELECT COUNT(*) AS n FROM "${name}"`).get().n]),
+  );
+
+test('the history lists every version newest first, with number, kind of change, whose words and time', async () => {
+  const db = freshDb();
+  const p = await answeredProposal(db);
+  assert.ok(saveDraft(db, p.id, 'My own words.'));
+  const { versions } = versionHistory(db, p.id);
+  assert.deepEqual(
+    versions.map((v) => [v.versionNo, v.change, v.author]),
+    [
+      [4, 'draft', 'Dane'],
+      [3, 'answer', 'Dane'],
+      [2, 'answer', 'Dane'],
+      [1, 'first-draft', 'AI'],
+    ],
+  );
+  for (const v of versions) assert.match(v.savedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.deepEqual(defaultPair(versionHistory(db, p.id)), [3, 4], 'by default the newest against the one before it');
+});
+
+test('the version Dane approved is marked Approved, and says when that approval was later cancelled and why', async () => {
+  const db = freshDb();
+  const p = await answeredProposal(db);
+  assert.equal(approve(db, p.id, fingerprintOf(p)).ok, true);
+  let h = versionHistory(db, p.id);
+  const approvedNo = h.versions[0].versionNo;
+  assert.equal(h.versions[0].fingerprint, fingerprintOf(p));
+  assert.equal(h.versions[0].approvals.length, 1);
+  assert.equal(h.versions[0].approvals[0].stands, true);
+  assert.equal(h.versions[0].approvals[0].cancelledWhy, null);
+  assert.ok(h.versions.slice(1).every((v) => v.approvals.length === 0), 'only the approved version is marked');
+
+  assert.ok(saveDraft(db, p.id, 'Changed after approval.'));
+  assert.equal(approvalState(db, p.id).state, 'cancelled');
+  h = versionHistory(db, p.id);
+  const marked = h.versions.find((v) => v.versionNo === approvedNo);
+  assert.equal(marked.approvals[0].stands, false);
+  assert.ok(marked.approvals[0].cancelledAt);
+  assert.match(marked.approvals[0].cancelledWhy, /draft’s text was changed/);
+  assert.equal(h.versions[0].approvals.length, 0, 'the edit after it is not approved');
+});
+
+test('the version a sent record points to, through its approval, is marked Sent', async () => {
+  const db = freshDb();
+  const p = await answeredProposal(db);
+  const fp = fingerprintOf(p);
+  assert.equal(approve(db, p.id, fp).ok, true);
+  assert.equal(markSent(db, p.id, fp).ok, true);
+  assert.ok(saveDraft(db, p.id, 'A follow-up edit after sending.'));
+  const h = versionHistory(db, p.id);
+  const sent = h.versions.filter((v) => v.sent.length > 0);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].fingerprint, fp);
+  assert.equal(sent[0].approvals.length, 1);
+  assert.equal(sent[0].sent[0].approvalId, sent[0].approvals[0].approvalId);
+  assert.equal(h.versions[0].sent.length, 0, 'the newer edit was not sent');
+});
+
+test('words changed and changed back: the approval marks the version he was looking at, not the older twin', async () => {
+  const db = freshDb();
+  const p = await answeredProposal(db);
+  const original = p.draft;
+  assert.ok(saveDraft(db, p.id, 'A detour.'));
+  assert.ok(saveDraft(db, p.id, original));
+  const now = getProposal(db, p.id);
+  assert.equal(approve(db, p.id, fingerprintOf(now)).ok, true);
+  const h = versionHistory(db, p.id);
+  const twins = h.versions.filter((v) => v.fingerprint === fingerprintOf(now));
+  assert.equal(twins.length, 2);
+  assert.deepEqual(twins.map((v) => v.approvals.length), [1, 0], 'newest twin carries the mark');
+});
+
+test('comparing two versions: the draft and each answer line up old on the left, new on the right', async () => {
+  const db = freshDb();
+  const p = await answeredProposal(db);
+  assert.ok(saveDraft(db, p.id, `${AI_DRAFT}\nA second line.`));
+  assert.ok(addQuestion(db, p.id, 'What is your rate?'));
+  const h = versionHistory(db, p.id);
+  const newest = h.versions[0].versionNo;
+  const cmp = compareVersions(h, newest, 1);
+  assert.equal(cmp.older.versionNo, 1, 'older always on the left, whichever way round asked');
+  assert.equal(cmp.newer.versionNo, newest);
+  assert.deepEqual(cmp.draft, [
+    { left: { text: AI_DRAFT, kind: 'same' }, right: { text: AI_DRAFT, kind: 'same' } },
+    { left: null, right: { text: 'A second line.', kind: 'added' } },
+  ]);
+  assert.deepEqual(
+    cmp.answers.map((a) => [a.question, a.in, a.rows.map((r) => [r.left?.kind ?? null, r.right?.kind ?? null])]),
+    [
+      ['How soon can you start?', 'both', [[null, 'added']]],
+      ['Have you used Postgres?', 'both', [[null, 'added']]],
+      ['What is your rate?', 'newer', []],
+    ],
+  );
+  assert.equal(versionFingerprint(h.versions[0]), fingerprintOf(getProposal(db, p.id)));
+});
+
+test('a version number that is not this proposal’s gives nothing, never another proposal’s text', async () => {
+  const db = freshDb();
+  const one = await answeredProposal(db);
+  const other = await openProposal(db, addJob(db), fakeModel('Text of a different proposal.'));
+  assert.equal(compareVersions(versionHistory(db, other.id), 1, 3), undefined, 'the other proposal has only version 1');
+  assert.equal(compareVersions(versionHistory(db, one.id), 1, 99), undefined);
+  assert.deepEqual(versionHistory(db, 999_999), { versions: [], unmatchedApprovals: [] }, 'an unknown proposal has no history');
+  assert.equal(defaultPair(versionHistory(db, 999_999)), undefined);
+});
+
+test('reading the history and comparing versions writes nothing to the database', async () => {
+  const db = freshDb();
+  const p = await answeredProposal(db);
+  const fp = fingerprintOf(p);
+  assert.equal(approve(db, p.id, fp).ok, true);
+  assert.equal(markSent(db, p.id, fp).ok, true);
+  assert.ok(saveDraft(db, p.id, 'After sending.'));
+  const before = rowCounts(db);
+  const changesBefore = db.prepare('SELECT total_changes() AS n').get().n;
+  const h = versionHistory(db, p.id);
+  compareVersions(h, ...defaultPair(h));
+  compareVersions(h, 1, h.versions[0].versionNo);
+  assert.deepEqual(rowCounts(db), before);
+  assert.equal(db.prepare('SELECT total_changes() AS n').get().n, changesBefore, 'not a single row written');
+});
+
+test('the history page reads only: no write, no form that posts', async () => {
+  const { readFileSync } = await import('node:fs');
+  const page = readFileSync(new URL('../app/proposals/[id]/versions/page.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(page, /method="post"|action="\/api/i);
+  assert.doesNotMatch(page, /\b(saveDraft|answerQuestion|addQuestion|approve|markSent|recordVersion|changeWithVersion)\b/);
+  const workspace = readFileSync(new URL('../app/proposals/[id]/page.tsx', import.meta.url), 'utf8');
+  assert.match(workspace, /href=\{`\/proposals\/\$\{proposal\.id\}\/versions`\}/, 'the workspace links to the history');
 });
