@@ -263,14 +263,14 @@ These are estimates, not measurements.
 | 6.1 | Dane can submit an approved proposal through Upwork's own confirmation step | Upwork's MCP flow: `manage_proposals` create → Upwork's preview → `confirm_preview` (S6). Two approvals: Dane approves the exact text in the app (3.3), then separately approves Upwork's preview before anything is sent (S4, S6). Upwork's own confirmation is never replaced by the app's | high | 5.2, 3.3 |
 | 6.2 | A double-click can never send a proposal twice | One lock on the confirm button, so it cannot fire twice for the same preview; no automatic resend (§13.7). Upwork already refuses a duplicate application (S6) | medium | 6.1 |
 | 6.3 | The app shows Upwork's answer, or says plainly that it doesn't know | When a confirm times out, record `OUTCOME_UNKNOWN` and read Upwork's proposal list back instead of retrying (S6; §13.8) | medium | 6.2 |
+| 6.4 | Dane sees how his proposals are doing: replies, interviews, wins, cost | Simple outcome numbers from the pipeline, with measured results kept apart from estimates (§14) | low | 3.5 |
+| 6.5 | The app suggests preference changes from his passes, and he approves each one | Suggestions only; nothing changes without his click (§5B, §12 Phase 4) | medium | 2.6, 6.4 |
 
 Tasks 6.2 and 6.3 drop from high to medium risk: R1 found that Upwork's
 `preview_id`, its refusal of duplicate applications and its proposal list
 (S6) already do most of what the plan's own submission lock, operation keys
 and reconciliation were for. What is left is small and easy to test, though
 it still guards a real send, so it is not low.
-| 6.4 | Dane sees how his proposals are doing: replies, interviews, wins, cost | Simple outcome numbers from the pipeline, with measured results kept apart from estimates (§14) | low | 3.5 |
-| 6.5 | The app suggests preference changes from his passes, and he approves each one | Suggestions only; nothing changes without his click (§5B, §12 Phase 4) | medium | 2.6, 6.4 |
 
 Tasks 6.4 and 6.5 don't need Upwork submission and can be built straight
 after the first version if Dane wants them sooner.
