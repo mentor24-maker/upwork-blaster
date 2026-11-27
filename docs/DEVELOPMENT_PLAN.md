@@ -3,7 +3,9 @@
 Status: **approved.** Revised November 9, 2026 to a trimmed first version
 (C12, C13); every Section 3 decision agreed November 18, 2026, when the
 first version's tasks and R1 were filed as tickets in Upwork Blaster's
-queue.
+queue. Revised November 27, 2026 to follow R1's findings
+(`docs/upwork-integration-verification.md`): Epics 5 and 6 now go through
+Upwork's official MCP server, and task 4.2 moves ahead of Epic 5.
 
 Source: the hand-off doc attached to UB-2 ("Upwork Blaster — Claude Code
 Implementation Handoff", v1.0, November 8, 2026). Section numbers below
@@ -65,7 +67,7 @@ versions, bid suggestions, export) wait until Dane has used it.
 | C2 | §16 ("begin Phase 1 while investigating Phase 0") | Split Phase 0 into **small separate tickets**: one research ticket for the Upwork terms and capability check, and the app skeleton as its own tickets. Never one ticket that "inspects and begins building". | The loop builds one ticket into one pull request. A ticket that mixes research and building can't be reviewed cleanly. |
 | C3 | §12 Phase 1 (one "complete manual/demo vertical slice") | Break Phase 1 into **three epics** (bare app, job inbox and ranking, proposal workspace), each usable on its own. | Phase 1 as written is weeks of work in one block. Smaller epics let Dane use, and correct, the inbox before drafting is built on top of it. |
 | C4 | §8 (12 tables up front) | **Grow the data model one task at a time**: each task adds only the tables it uses. Start with Opportunity, Preferences and PortfolioEvidence (1.3). Evaluation and Decision arrive with 2.5 and 2.6, the approval fingerprint with 3.3, ProposalVersion with 4.3, and ProviderConnection, SearchRun and SubmissionAttempt with the epics that need them. | Tables designed before the screens that use them get redesigned. Migrations are cheap; guessing is not. |
-| C5 | §9 (full approval state machine, operation keys, submission lock, reconciliation) | Build the **manual-submission version first**: Draft → Ready → Approved (bound to a fingerprint of the exact text) → "Dane says he sent it". Defer locks, operation keys, `OUTCOME_UNKNOWN` and reconciliation to Epic 6, and build them only if Upwork really lets an outside app submit. | All of that machinery exists to stop duplicate automatic sends. With manual submission there is nothing to send twice. §12 Phase 3 already says manual submission may be the permanent path. |
+| C5 | §9 (full approval state machine, operation keys, submission lock, reconciliation) | Build the **manual-submission version first**: Draft → Ready → Approved (bound to a fingerprint of the exact text) → "Dane says he sent it". Defer locks, operation keys, `OUTCOME_UNKNOWN` and reconciliation to Epic 6, and build them only if Upwork really lets an outside app submit. R1 found that Upwork's own preview step and its refusal of duplicate applications cover most of that deferred machinery (S6), so Epic 6 builds a much smaller version (see 6.2, 6.3). | All of that machinery exists to stop duplicate automatic sends. With manual submission there is nothing to send twice. §12 Phase 3 already says manual submission may be the permanent path. |
 | C6 | §7, §3.8 (OpenClaw) | **Leave OpenClaw out** of the plan, with no task for it. Revisit only if a later need appears. | The hand-off itself calls it optional. It adds an integration and a security boundary with no feature that needs it. |
 | C7 | §7 ("durable background-job mechanism") | **No background-job system** in the first epics. Ranking and drafting run when Dane presses a button and he waits a few seconds. | The MVP has no unattended work (§3.7), so a job queue would be infrastructure with no user. |
 | C8 | §5A Setup (connection, capacity, spending limits on day one) | Setup in the early epics is **just portfolio evidence and search preferences**. Connection status and spending limits arrive with Epics 5 and 6. | There is nothing to connect and nothing to spend until then. |
@@ -129,6 +131,20 @@ through 2.4.
 | D6 | **Upwork access** | **Manual mode until Epic 5.** Do the research task R1 (official MCP server, terms, rate limits) early, since it is reading only, but build no live connection until Dane has read its findings and said go. | No access is needed to make the tool useful. The legal page was never fully read (§4), so the live connection has to wait for that. |
 | D7 | **Where the private business data lives** (portfolio claims, pricing guidance) | **Entered in the app** by Dane, stored in his database, never in the repository. | Public repository (C11). |
 
+### Still open, from R1
+
+R1 (`docs/upwork-integration-verification.md`, "What is unclear") found four
+questions Upwork's terms do not settle. They are **open**: Dane has not
+decided them, and this plan does not answer them. Each is explained in full
+in that document.
+
+| # | Question, in plain words | Status |
+|---|---|---|
+| U1 | **Can the app's AI rank jobs?** Upwork's terms forbid an AI ranking jobs "using criteria the Agent itself determines" but allow results based on criteria Dane specified (S1 §5.9). Does scoring jobs against Dane's own written preferences count as his criteria? | open |
+| U2 | **Does an AI-drafted proposal need an AI label?** The terms require saying so when content would reasonably be taken as written by a person (S1 §9.7). Does a draft Dane edited and approved still count, and how would the label look? | open |
+| U3 | **Is pasting a job by hand "copying" it?** The general terms forbid copying information found on Upwork without consent (S2 §3.5). Does that cover Dane pasting a job post into his own private tool, as Epics 2 and 3 do? | open |
+| U4 | **Which multi-user duties fit a one-person app?** Some duties (a privacy notice, a sub-processor list, a yearly security check; S1 §9.4, §9.9, §10.5) are written for apps with other users. Which apply when Dane is the builder and the only user? | open |
+
 ## 4. Epics
 
 In build order. Epics 1 to 3 are **the first version**: the smallest tool
@@ -152,18 +168,23 @@ used the first version and knows what he misses.
 **After the first version**
 
 4. **Epic 4 — Comforts.** The pieces trimmed from the first version: Demo
-   mode, an activity log page, draft version history, safe regenerating,
-   a suggested bid, and data export. Build the ones Dane asks for, in the
-   order he asks.
-5. **Epic 5 — Official Upwork read connection.** Goal: (only if R1 says it
-   is allowed) search and read jobs through the official route, on demand
-   and capped. Once it ships, Dane presses **Find projects** instead of
-   pasting.
-6. **Epic 6 — Approved submission and learning (only if verified).** Goal:
-   submit an approved proposal through Upwork's supported confirmation flow,
-   with exactly-once protection, and learn from outcomes. If Upwork doesn't
-   support it, the manual path from Epic 3 stays the product and only the
-   learning tasks are built.
+   mode, draft version history, safe regenerating, a suggested bid, and
+   data export. Build the ones Dane asks for, in the order he asks. The
+   activity log (4.2) is **not** optional any more: Upwork's terms require
+   a log of who authorized each AI action (S1 §10.6), so it is built before
+   Epic 5.
+5. **Epic 5 — Official Upwork read connection.** Goal: search and read jobs
+   through **Upwork's official MCP server** (R1 found its terms permit it,
+   S1 §4.1), on demand and capped. Once it ships, Dane presses **Find
+   projects** instead of pasting.
+6. **Epic 6 — Approved submission and learning.** Goal: submit an approved
+   proposal through Upwork's own MCP steps, create → preview →
+   `confirm_preview`, with Dane approving the exact text and then approving
+   Upwork's preview (S6), and learn from outcomes. Upwork's preview and its
+   refusal of duplicate applications do most of the "never send twice" work,
+   so the app's own part is small (6.2, 6.3). The manual path from Epic 3
+   keeps working on its own, because Upwork can change or withdraw its tools
+   at any time (S1 §3.5(e), §16.2).
 
 ## 5. First-pass tasks
 
@@ -215,12 +236,12 @@ These are estimates, not measurements.
 | 3.5 | Dane tracks each job through replied, interviewing, won or lost, with notes | Pipeline board with owner-entered statuses, notes and next actions | low | 3.4 |
 | 3.6 | The whole flow is checked end to end automatically | An end-to-end test of §13.15 on made-up fixture jobs (no real client text) | low | 3.5 |
 
-### Epic 4 — Comforts (after the first version; build only what Dane asks for)
+### Epic 4 — Comforts (after the first version; build only what Dane asks for, except 4.2, which Epic 5 needs)
 
 | # | Task | Goal | Risk | Waits on |
 |---|---|---|---|---|
 | 4.1 | Dane can try the app on made-up jobs, clearly marked Demo | A Demo/Manual mode with a visible banner and the fixture jobs from 3.6 (§13.13) | low | 3.6 |
-| 4.2 | Dane can read a log of everything he and the AI did | ActivityEvent table and a plain log page; secrets never written to it (test) | low | 1.3 |
+| 4.2 | Dane can read a log of everything he and the AI did | ActivityEvent table and a plain log page; secrets never written to it (test). **Not optional: built before Epic 5**, because Upwork's terms require a log tying each AI action to who authorized it, producible on request (S1 §10.6). Shipped in pull request #23 | low | 1.3 |
 | 4.3 | Every edit to a draft is kept as a version he can compare | ProposalVersion table, version list and a diff view | low | 3.3 |
 | 4.4 | Regenerating a draft never silently throws away Dane's edits | Regenerate shows what changes against his edited version and lets him keep his parts | medium | 4.3 |
 | 4.5 | Dane sees a suggested bid and milestones, as a range with its assumptions | From his own pricing guidance in Preferences; never hard-coded; labeled an estimate | medium | 3.1, 2.2 |
@@ -230,20 +251,26 @@ These are estimates, not measurements.
 
 | # | Task | Goal | Risk | Waits on |
 |---|---|---|---|---|
-| 5.1 | Dane can connect his Upwork account through the official sign-in, and disconnect it | Only if R1 says it's allowed. Official OAuth; tokens encrypted server-side, never in logs or the browser (§13.9, §13.12) | high | R1 approved by Dane, 1.2 |
-| 5.2 | Dane presses **Find projects** and gets a capped, on-demand search | Upwork adapter behind the same interface as manual input; query and page caps; duplicates merged (§13.1); cancel button | high | 5.1, 2.6 |
+| 5.1 | Dane can connect his Upwork account through Upwork's MCP server, and disconnect it | **First step: prove a home-built app on the Mini can connect** to the MCP server at all (U7 in the R1 document; Upwork lists only chat apps and code editors, S4). If it cannot, stop and come back to Dane before building more. Then: Dane logs in to Upwork in his browser and approves the link himself (S4; an agent may not accept terms for him, S1 §5.8); OAuth 2.1 sign-in (S4); tokens encrypted server-side, never in logs or the browser (S1 §6.4, §8.4; §13.9, §13.12); Upwork-sourced data encrypted at rest (S1 §10.2) | high | Dane's browser login and his decision to accept Upwork's API & MCP Terms (S1 §1.1), 1.2, 4.2 |
+| 5.2 | Dane presses **Find projects** and gets a capped, on-demand search | Upwork adapter behind the same interface as manual input; query and page caps; duplicates merged (§13.1); cancel button. On demand only, **never on a timer**: Upwork allows search for a user-directed task, not for watching the market (S1 §4.1). Until U1 is settled, Upwork-sourced jobs are ranked only on Dane's own stated criteria, shown on the card, and the app never shortlists or hides jobs on its own (S1 §5.9) | high | 5.1, 2.6 |
 | 5.3 | When Upwork says "slow down" or a call fails, the app stops and says so | Rate-limit handling and honest partial-failure display (§13.10); fall back to Manual mode, never scraping | medium | 5.2 |
-| 5.4 | Upwork data is kept only as long as allowed | Retention and expiry rules from R1; cleanup on disconnect (§13.14) | medium | 5.1 |
+| 5.4 | Upwork data is kept only as long as allowed | An Upwork-sourced job copy is kept only while Dane is working on it, then deleted (S1 §8.6); nothing goes into any AI knowledge base or vector index (S1 §5.3, §8.6, §9.6); whatever the AI provider keeps must be 30 days or less (S1 §8.6), checked with D5's retention check of the Anthropic account; everything deleted when Dane disconnects (S1 §8.7; §13.14). Upwork-sourced data stays encrypted at rest (S1 §10.2, set up in 5.1) | medium | 5.1 |
 
-### Epic 6 — Approved submission and learning (coarser, only if verified)
+### Epic 6 — Approved submission and learning (coarser)
 
 | # | Task | Goal | Risk | Waits on |
 |---|---|---|---|---|
-| 6.1 | Dane can submit an approved proposal through Upwork's own confirmation step | Only if R1 finds a supported route. Provider draft and confirmation; Upwork's own confirmation is never replaced by the app's | high | 5.2, 3.3 |
-| 6.2 | A double-click or a crash can never send a proposal twice | Submission lock, operation key, `OUTCOME_UNKNOWN` on timeout, no automatic resend (§13.7, §13.8) | high | 6.1 |
-| 6.3 | The app shows Upwork's receipt, or says plainly that it doesn't know | Reconciliation through supported reads; a receipt is required for "submitted" | high | 6.2 |
+| 6.1 | Dane can submit an approved proposal through Upwork's own confirmation step | Upwork's MCP flow: `manage_proposals` create → Upwork's preview → `confirm_preview` (S6). Two approvals: Dane approves the exact text in the app (3.3), then separately approves Upwork's preview before anything is sent (S4, S6). Upwork's own confirmation is never replaced by the app's | high | 5.2, 3.3 |
+| 6.2 | A double-click can never send a proposal twice | One lock on the confirm button, so it cannot fire twice for the same preview; no automatic resend (§13.7). Upwork already refuses a duplicate application (S6) | medium | 6.1 |
+| 6.3 | The app shows Upwork's answer, or says plainly that it doesn't know | When a confirm times out, record `OUTCOME_UNKNOWN` and read Upwork's proposal list back instead of retrying (S6; §13.8) | medium | 6.2 |
 | 6.4 | Dane sees how his proposals are doing: replies, interviews, wins, cost | Simple outcome numbers from the pipeline, with measured results kept apart from estimates (§14) | low | 3.5 |
 | 6.5 | The app suggests preference changes from his passes, and he approves each one | Suggestions only; nothing changes without his click (§5B, §12 Phase 4) | medium | 2.6, 6.4 |
+
+Tasks 6.2 and 6.3 drop from high to medium risk: R1 found that Upwork's
+`preview_id`, its refusal of duplicate applications and its proposal list
+(S6) already do most of what the plan's own submission lock, operation keys
+and reconciliation were for. What is left is small and easy to test, though
+it still guards a real send, so it is not low.
 
 Tasks 6.4 and 6.5 don't need Upwork submission and can be built straight
 after the first version if Dane wants them sooner.
