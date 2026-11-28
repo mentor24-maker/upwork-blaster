@@ -11,3 +11,10 @@ answers), and the loader refuses outright to write to the real database.
 Loading again never makes duplicates. A "Reload demo data" button on the
 yellow Demo banner wipes the demo database and starts it fresh, for a clean
 run-through.
+
+After review, three fixes. The Activity page used to say *Dane* saved the
+made-up jobs, portfolio and preferences; every one of those lines now says
+the app did it. A load that broke partway used to leave a half-filled demo
+database that later loads never repaired; now a load either lands whole or
+not at all. And a failed Reload used to leave Demo mode empty; now emptying
+and reloading happen together, so a failed Reload leaves everything as it was.

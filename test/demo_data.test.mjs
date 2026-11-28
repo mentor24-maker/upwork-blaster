@@ -175,3 +175,60 @@ test('the Demo banner offers Reload demo data to a signed-in browser only', () =
   assert.ok(!renderToStaticMarkup(createElement(ModeBar, { mode: 'demo', canSwitch: false })).includes(RELOAD_LABEL));
   assert.ok(!renderToStaticMarkup(createElement(ModeBar, { mode: 'manual' })).includes(RELOAD_LABEL));
 });
+
+test('every activity line the demo load writes is the app’s, never Dane’s', withDataDir(async () => {
+  await postMode(modeForm('demo'));
+  const db = appDatabase();
+  const rows = db.prepare('SELECT actor, summary FROM activity_event ORDER BY id').all();
+  assert.ok(rows.length > 0, 'the load is on the Activity page');
+  assert.deepEqual(rows.filter((r) => r.actor === 'Dane'), [], 'no line says Dane saved the made-up data');
+  for (const j of DEMO_JOBS) assert.ok(rows.some((r) => r.summary.startsWith('The app loaded the demo job') && r.summary.includes(j.title)), `a line for ${j.title}`);
+  await postDemo();
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM activity_event WHERE actor = 'Dane'").get().n, 0, 'nor after Reload');
+}));
+
+// Make the second score of a load fail, as a crash partway through would.
+const breakSecondScore = (db) => db.exec(`CREATE TRIGGER test_break_score BEFORE INSERT ON evaluation
+  WHEN (SELECT COUNT(*) FROM evaluation) >= 1 BEGIN SELECT RAISE(ABORT, 'made-up failure'); END`);
+
+test('a load that fails partway leaves the demo database as it was, and the next load fills it whole', withDataDir(async () => {
+  setMode('demo');
+  const db = appDatabase();
+  breakSecondScore(db);
+  assert.throws(() => loadDemoData(db), /could not be scored/);
+  assert.deepEqual(counts(db), { jobs: 0, entries: 0 }, 'no half-filled database');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM preferences').get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM activity_event').get().n, 0);
+  assert.equal(db.isTransaction, false, 'the transaction is closed');
+
+  db.exec('DROP TRIGGER test_break_score');
+  loadDemoData(db);
+  assert.deepEqual(counts(db), { jobs: DEMO_JOBS.length, entries: DEMO_PORTFOLIO.length });
+  assert.ok(listJobs(db).every((j) => j.scoringProblem === null), 'every job scored');
+}));
+
+test('a Reload that fails changes nothing: the demo data from before is all still there', withDataDir(async () => {
+  await postMode(modeForm('demo'));
+  const db = appDatabase();
+  const extra = saveJob(db, { url: 'https://www.upwork.com/jobs/~01demo0000000kept', title: 'A demo job he added', description: 'Made up.', budget: null, jobType: null, postedAt: null, client: null, connectsCost: null });
+  assert.ok(extra.ok);
+  const before = {
+    jobs: listJobs(db).map((j) => j.title).sort(),
+    evaluations: db.prepare('SELECT COUNT(*) AS n FROM evaluation').get().n,
+    activity: db.prepare('SELECT COUNT(*) AS n FROM activity_event').get().n,
+  };
+  breakSecondScore(db);
+
+  const res = await postDemo();
+  assert.equal(res.headers.get('location'), '/jobs?demo=failed', 'the page says it failed');
+  assert.deepEqual(
+    {
+      jobs: listJobs(db).map((j) => j.title).sort(),
+      evaluations: db.prepare('SELECT COUNT(*) AS n FROM evaluation').get().n,
+      activity: db.prepare('SELECT COUNT(*) AS n FROM activity_event').get().n,
+    },
+    before,
+  );
+  assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1, 'foreign keys are back on');
+  assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'test_break_score'").get(), 'the triggers are as they were');
+}));

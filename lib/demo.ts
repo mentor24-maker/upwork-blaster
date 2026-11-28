@@ -20,7 +20,7 @@ import { realpathSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import jobsFixture from '../test/e2e/fixtures/jobs.json' with { type: 'json' };
 import portfolioFixture from '../test/e2e/fixtures/portfolio.json' with { type: 'json' };
-import { logActivity } from './activity.ts';
+import { logActivity, logJobActivity, quotedName } from './activity.ts';
 import { demoDatabasePath } from './db.ts';
 import { checkAnswer, quotePost } from './extractJob.ts';
 import { findJobByUrl, saveJob } from './jobs.ts';
@@ -70,30 +70,55 @@ export function assertDemoDatabase(db: DatabaseSync, env: Env = process.env): vo
 export type DemoLoad = { jobsAdded: number; entriesAdded: number; preferencesSaved: boolean };
 
 /**
- * Put the made-up jobs, portfolio and preferences into the demo database.
- * Running it again adds nothing: jobs are matched by link, portfolio entries
- * by project name, and preferences are saved only when there are none.
+ * Run `fn` as one transaction: all of it lands, or (on any error) none of it.
+ * Foreign keys are switched off around it when asked (emptying the tables),
+ * since SQLite ignores that switch inside a transaction.
  */
-export function loadDemoData(db: DatabaseSync, env: Env = process.env): DemoLoad {
-  assertDemoDatabase(db, env);
+function allOrNothing<T>(db: DatabaseSync, fn: () => T, foreignKeysOff = false): T {
+  if (foreignKeysOff) db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const out = fn();
+      db.exec('COMMIT');
+      return out;
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  } finally {
+    if (foreignKeysOff) db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+/** The load itself, inside a transaction the caller holds. */
+function fill(db: DatabaseSync): DemoLoad {
   const result: DemoLoad = { jobsAdded: 0, entriesAdded: 0, preferencesSaved: false };
+  // Every line this writes is the app's: Dane did not save any of it.
+  const quiet = { log: false };
 
   // Preferences and portfolio first, so the jobs are scored against them.
   if (!currentPreferences(db)) {
-    savePreferences(db, DEMO_PREFERENCES);
+    const version = savePreferences(db, DEMO_PREFERENCES, quiet);
+    logActivity(db, { actor: 'app', kind: 'demo-preferences', summary: `The app saved the made-up demo preferences (version ${version}).` });
     result.preferencesSaved = true;
   }
 
   const have = new Set(listEntries(db).map((e) => e.project));
   for (const e of DEMO_PORTFOLIO) {
     if (have.has(e.project)) continue;
-    addEntry(db, {
-      project: e.project,
-      status: e.status as EvidenceStatus,
-      features: e.features,
-      links: e.links ? [e.links] : [],
-      approvedForUse: e.approvedForUse,
-    });
+    addEntry(
+      db,
+      {
+        project: e.project,
+        status: e.status as EvidenceStatus,
+        features: e.features,
+        links: e.links ? [e.links] : [],
+        approvedForUse: e.approvedForUse,
+      },
+      quiet,
+    );
+    logActivity(db, { actor: 'app', kind: 'demo-portfolio', summary: `The app added the demo entry ${quotedName(e.project)} to your portfolio.` });
     have.add(e.project);
     result.entriesAdded += 1;
   }
@@ -102,18 +127,25 @@ export function loadDemoData(db: DatabaseSync, env: Env = process.env): DemoLoad
     if (findJobByUrl(db, j.url)) continue;
     // The fixture's answer, checked as a real AI answer would be: no API call.
     const f = checkAnswer(j.aiAnswer, quotePost(j.title, j.description));
-    const saved = saveJob(db, {
-      url: j.url,
-      title: j.title,
-      description: j.description,
-      budget: f.budget,
-      jobType: f.jobType,
-      postedAt: f.postedAt,
-      client: f.client,
-      connectsCost: f.connectsCost,
-    });
-    if (!saved.ok) continue;
-    db.prepare(`UPDATE opportunity SET extracted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`).run(saved.id);
+    const saved = saveJob(
+      db,
+      {
+        url: j.url,
+        title: j.title,
+        description: j.description,
+        budget: f.budget,
+        jobType: f.jobType,
+        postedAt: f.postedAt,
+        client: f.client,
+        connectsCost: f.connectsCost,
+      },
+      quiet,
+    );
+    if (!saved.ok) throw new Error(`the demo job "${j.title}" could not be saved`);
+    logJobActivity(db, saved.id, 'app', 'demo-job', (name) => `The app loaded the demo job ${name}.`);
+    db.prepare(
+      `UPDATE opportunity SET extracted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+    ).run(saved.id);
     const problem = scoreJobAndRecord(db, saved.id);
     if (problem) throw new Error(`the demo job "${j.title}" could not be scored: ${problem}`);
     result.jobsAdded += 1;
@@ -130,47 +162,60 @@ export function loadDemoData(db: DatabaseSync, env: Env = process.env): DemoLoad
 }
 
 /**
- * Empty the demo database, every table but the migrations record, so a
- * fresh run-through starts clean. Some tables refuse deletes by design
+ * Empty every table but the migrations record, inside a transaction the
+ * caller holds with foreign keys off. Some tables refuse deletes by design
  * (a saved proposal version is never deleted), so the triggers are set aside
- * and put back exactly as they were, all in one transaction.
+ * and put back exactly as they were.
  */
-export function emptyDemoDatabase(db: DatabaseSync, env: Env = process.env): void {
-  assertDemoDatabase(db, env);
-  const tables = (db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations'`).all() as { name: string }[]).map((r) => r.name);
+function empty(db: DatabaseSync): void {
+  const tables = (db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT GLOB 'sqlite_*' AND name != 'schema_migrations'`).all() as { name: string }[]).map((r) => r.name);
   const triggers = db.prepare(`SELECT name, sql FROM sqlite_master WHERE type = 'trigger'`).all() as { name: string; sql: string }[];
   const hasSequence = db.prepare(`SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'`).get();
   const q = (name: string) => `"${name.replace(/"/g, '""')}"`;
-
-  db.exec('PRAGMA foreign_keys = OFF');
-  try {
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      for (const t of triggers) db.exec(`DROP TRIGGER ${q(t.name)}`);
-      for (const name of tables) db.exec(`DELETE FROM ${q(name)}`);
-      if (hasSequence) db.exec('DELETE FROM sqlite_sequence');
-      for (const t of triggers) db.exec(t.sql);
-      db.exec('COMMIT');
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    }
-  } finally {
-    db.exec('PRAGMA foreign_keys = ON');
-  }
+  for (const t of triggers) db.exec(`DROP TRIGGER ${q(t.name)}`);
+  for (const name of tables) db.exec(`DELETE FROM ${q(name)}`);
+  if (hasSequence) db.exec('DELETE FROM sqlite_sequence');
+  for (const t of triggers) db.exec(t.sql);
 }
 
-/** The "Reload demo data" button: empty the demo database and load it again. */
+/**
+ * Put the made-up jobs, portfolio and preferences into the demo database, as
+ * one transaction: a load that fails partway leaves the database as it was.
+ * Running it again adds nothing: jobs are matched by link, portfolio entries
+ * by project name, and preferences are saved only when there are none.
+ */
+export function loadDemoData(db: DatabaseSync, env: Env = process.env): DemoLoad {
+  assertDemoDatabase(db, env);
+  return allOrNothing(db, () => fill(db));
+}
+
+/** Empty the demo database so a fresh run-through starts clean, as one transaction. */
+export function emptyDemoDatabase(db: DatabaseSync, env: Env = process.env): void {
+  assertDemoDatabase(db, env);
+  allOrNothing(db, () => empty(db), true);
+}
+
+/**
+ * The "Reload demo data" button: empty the demo database and load it again,
+ * both in one transaction, so a Reload that fails changes nothing.
+ */
 export function reloadDemoData(db: DatabaseSync, env: Env = process.env): DemoLoad {
-  emptyDemoDatabase(db, env);
-  return loadDemoData(db, env);
+  assertDemoDatabase(db, env);
+  return allOrNothing(
+    db,
+    () => {
+      empty(db);
+      return fill(db);
+    },
+    true,
+  );
 }
 
 /** What the Jobs page says after a demo load, from the address (`?demo=`). */
 export function demoMessage(code: string | string[] | undefined): string | null {
   const c = Array.isArray(code) ? code[0] : code;
   if (c === 'loaded') return 'The made-up demo data is loaded.';
-  if (c === 'failed') return 'The made-up demo data could not be loaded. The app’s log says why; nothing real was touched.';
+  if (c === 'failed') return 'The made-up demo data could not be loaded, so nothing changed. The app’s log says why; nothing real was touched.';
   return null;
 }
 
