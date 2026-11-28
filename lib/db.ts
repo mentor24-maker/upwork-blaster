@@ -7,6 +7,8 @@
  *
  *   UB_DATA_DIR   the data folder; defaults to ~/upwork-blaster-data
  *     app.sqlite      the database
+ *     demo.sqlite     Demo mode's separate database (lib/mode.ts), never backed up
+ *     mode.json       which of the two the app shows (lib/mode.ts)
  *     backups/        the daily copies (lib/backup.ts), the last 14 kept
  *
  * `dataDir()` refuses a folder inside the repository, so a wrong setting fails
@@ -26,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 export const REPO_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const MIGRATIONS_DIR = join(REPO_DIR, 'db', 'migrations');
 export const DB_FILE_NAME = 'app.sqlite';
+export const DEMO_DB_FILE_NAME = 'demo.sqlite';
 
 type Env = Record<string, string | undefined>;
 
@@ -58,6 +61,11 @@ export function dataDir(env: Env = process.env, repoDir: string = REPO_DIR): str
 /** Where the database file is. */
 export function databasePath(env: Env = process.env): string {
   return join(dataDir(env), DB_FILE_NAME);
+}
+
+/** Where Demo mode's database file is: next to the real one, never the same file. */
+export function demoDatabasePath(env: Env = process.env): string {
+  return join(dataDir(env), DEMO_DB_FILE_NAME);
 }
 
 /** Open (creating if need be) the database file, with foreign keys on. */
