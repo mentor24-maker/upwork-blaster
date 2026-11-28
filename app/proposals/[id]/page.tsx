@@ -5,6 +5,7 @@ import { KIND_LABELS, proposalFlags } from '../../../lib/claimCheck.ts';
 import { getProposal, MAX_ANSWER, MAX_DRAFT, MAX_QUESTION, unanswered } from '../../../lib/draft.ts';
 import { getJob, type SavedJob } from '../../../lib/jobs.ts';
 import { getEntry } from '../../../lib/portfolio.ts';
+import { versionCount as countVersions } from '../../../lib/proposalVersions.ts';
 import { latestSent } from '../../../lib/sent.ts';
 
 // Read on every visit: the draft and the answers change.
@@ -52,6 +53,7 @@ export default async function ProposalPage({
   const flags = proposalFlags(db, proposal.id);
   const approval = approvalState(db, proposal.id);
   const sent = latestSent(db, proposal.id);
+  const versionCount = countVersions(db, proposal.id);
   const done = pick(SAVED, saved);
   const problem = pick(ERRORS, error);
 
@@ -85,6 +87,11 @@ export default async function ProposalPage({
           <strong>Sent by Dane</strong> (you said so) {when(sent.confirmedAt)} Mountain time. The app sent nothing.
         </p>
       ) : null}
+      <p>
+        <a id="version-history" href={`/proposals/${proposal.id}/versions`}>
+          Version history ({versionCount})
+        </a>
+      </p>
       {problem ? (
         <p role="alert" style={{ color: '#a40000' }}>
           {problem}
