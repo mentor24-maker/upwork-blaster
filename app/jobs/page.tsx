@@ -1,4 +1,5 @@
 import { appDatabase } from '../../lib/app_db.ts';
+import { demoMessage } from '../../lib/demo.ts';
 import { listJobs, type SavedJob } from '../../lib/jobs.ts';
 
 const UNKNOWN = <em style={{ color: '#666' }}>unknown</em>;
@@ -7,8 +8,9 @@ const jobType = (t: SavedJob['jobType']) => (t === 'fixed' ? 'Fixed price' : t =
 const savedAt = (iso: string) =>
   new Date(iso).toLocaleString('en-US', { timeZone: 'America/Denver', dateStyle: 'medium', timeStyle: 'short' });
 
-export default async function JobsPage({ searchParams }: { searchParams: Promise<{ saved?: string | string[] }> }) {
-  const { saved } = await searchParams;
+export default async function JobsPage({ searchParams }: { searchParams: Promise<{ saved?: string | string[]; demo?: string | string[] }> }) {
+  const { saved, demo } = await searchParams;
+  const demoNote = demoMessage(demo);
   const jobs = listJobs(appDatabase());
   const savedJob = typeof saved === 'string' ? jobs.find((j) => String(j.id) === saved) : undefined;
   return (
@@ -20,6 +22,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
       <p>
         <a href="/jobs/new">Add a job</a>
       </p>
+      {demoNote ? <p role="status">{demoNote}</p> : null}
       {savedJob ? <p role="status">Saved “{savedJob.title}”.</p> : null}
       {jobs.length === 0 ? (
         <p>No jobs saved yet.</p>

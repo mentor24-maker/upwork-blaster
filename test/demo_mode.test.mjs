@@ -104,16 +104,18 @@ test('a job saved in Demo mode never reaches the real database or the Manual job
   const toDemo = await postMode(post('/api/mode', { mode: 'demo' }));
   assert.equal(toDemo.status, 303);
   assert.equal(currentMode(), 'demo');
-  assert.deepEqual(listJobs(appDatabase()).map((j) => j.title), [], 'the demo database starts empty: the real job is not shown');
+  // Switching on loads the made-up jobs (UB-30, test/demo_data.test.mjs); the real job is not among them.
+  const madeUp = listJobs(appDatabase()).map((j) => j.title);
+  assert.ok(!madeUp.includes('A real-looking made-up job'), 'the real job is not shown in Demo');
   assert.equal((await postJob(post('/api/jobs', job('bbbb0000111122223333', 'A demo job')))).status, 303);
-  assert.deepEqual(listJobs(appDatabase()).map((j) => j.title), ['A demo job']);
+  assert.deepEqual(listJobs(appDatabase()).map((j) => j.title), ['A demo job', ...madeUp]);
 
   // Back to Manual: the demo job is gone from the list and was never in the real file.
   assert.equal((await postMode(post('/api/mode', { mode: 'manual' }))).status, 303);
   assert.equal(currentMode(), 'manual');
   assert.deepEqual(listJobs(appDatabase()).map((j) => j.title), ['A real-looking made-up job']);
   assert.deepEqual(titlesIn(databasePath()), ['A real-looking made-up job']);
-  assert.deepEqual(titlesIn(demoDatabasePath()), ['A demo job']);
+  assert.deepEqual(titlesIn(demoDatabasePath()), [...[...madeUp].reverse(), 'A demo job']);
 }));
 
 test('the switch refuses anything but demo or manual, and changes nothing', withDataDir(async () => {

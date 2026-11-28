@@ -21,6 +21,8 @@ type Env = Record<string, string | undefined>;
 export type Mode = 'demo' | 'manual';
 export const MODE_FILE_NAME = 'mode.json';
 export const DEMO_BANNER_TEXT = 'DEMO MODE: made-up data, nothing here is real';
+/** The banner's button that empties the demo database and loads the made-up data again (lib/demo.ts). */
+export const RELOAD_LABEL = 'Reload demo data';
 
 export function modePath(env: Env = process.env): string {
   return join(dataDir(env), MODE_FILE_NAME);
@@ -85,5 +87,12 @@ export function ModeBar({ mode, canSwitch = true }: { mode: Mode; canSwitch?: bo
     },
     createElement('span', { style: { marginRight: '1rem' } }, DEMO_BANNER_TEXT),
     canSwitch ? form : null,
+    canSwitch
+      ? createElement(
+          'form',
+          { method: 'post', action: '/api/demo', style: { display: 'inline', marginLeft: '0.5rem' } },
+          createElement('button', { type: 'submit' }, RELOAD_LABEL),
+        )
+      : null,
   );
 }
