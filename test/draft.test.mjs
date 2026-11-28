@@ -202,8 +202,8 @@ test('§13.3: pressing Pursue creates a draft and nothing else, and sends nothin
     const after = counts(db);
     assert.deepEqual(
       after,
-      { ...before, decision: 1, proposal: 1, proposal_question: 2, ai_usage: 1, activity_event: before.activity_event + 3 },
-      'only the decision, the draft, its questions, the AI cost and their three activity lines were written',
+      { ...before, decision: 1, proposal: 1, proposal_question: 2, proposal_version: 1, ai_usage: 1, activity_event: before.activity_event + 3 },
+      'only the decision, the draft, its questions, its first version, the AI cost and their three activity lines were written',
     );
     assert.deepEqual(
       ['opportunity', 'evaluation', 'preferences', 'portfolio_evidence'].map((t) => db.prepare(`SELECT * FROM ${t}`).all()),

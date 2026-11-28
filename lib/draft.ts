@@ -28,6 +28,7 @@ import { quotePost, type AiDeps } from './extractJob.ts';
 import { getJob, MAX_FIELD, type SavedJob } from './jobs.ts';
 import { approvedEvidence, STATUS_LABELS, type SavedEntry } from './portfolio.ts';
 import { logProposalActivity } from './activity.ts';
+import { changeWithVersion } from './proposalVersions.ts';
 
 /** Writing a proposal Dane may send needs a stronger model than reading fields. Priced in lib/ai/pricing.ts. */
 export const DRAFT_MODEL = 'claude-sonnet-5-5';
@@ -227,12 +228,16 @@ export async function writeDraft(db: DatabaseSync, proposalId: number, ai?: AiDe
   const result = await writeDraftText(job, evidence, deps);
 
   if (result.ok) {
-    const res = db.prepare(
-      `UPDATE proposal SET draft = ?, draft_problem = NULL, evidence_ids = ?,
-         drafted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       WHERE id = ? AND draft IS NULL`,
-    ).run(result.text, JSON.stringify(evidence.map((e) => e.id)), proposalId);
-    if (Number(res.changes) === 1) {
+    // The draft and its version 1 are saved together, or neither is.
+    const written = changeWithVersion(db, proposalId, 'first-draft', 'AI', () => {
+      const res = db.prepare(
+        `UPDATE proposal SET draft = ?, draft_problem = NULL, evidence_ids = ?,
+           drafted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ? AND draft IS NULL`,
+      ).run(result.text, JSON.stringify(evidence.map((e) => e.id)), proposalId);
+      return Number(res.changes) === 1;
+    });
+    if (written) {
       logProposalActivity(db, proposalId, 'AI', 'draft-created', (name) => `The AI wrote the first draft of your proposal for ${name}.`);
     }
   } else {
@@ -331,29 +336,39 @@ export function readWorkspaceForm(form: FormLike): WorkspaceAction | null {
  * Save Dane's own edit of the draft. The claim check (lib/claimCheck.ts) runs
  * on the saved text every time the workspace is shown, so a save is checked
  * at once. Saving never approves anything. False when there is no such proposal.
+ *
+ * Each change here and below keeps a version of the whole proposal in the
+ * same transaction (lib/proposalVersions.ts): if the version cannot be saved,
+ * the change is not saved either. Saving the same text again keeps no version.
  */
 export function saveDraft(db: DatabaseSync, proposalId: number, draft: string): boolean {
-  const res = db
-    .prepare(
-      `UPDATE proposal SET draft = ?, draft_problem = NULL,
-         edited_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       WHERE id = ?`,
-    )
-    .run(draft, proposalId);
-  if (Number(res.changes) !== 1) return false;
+  const saved = changeWithVersion(db, proposalId, 'draft', 'Dane', () => {
+    const res = db
+      .prepare(
+        `UPDATE proposal SET draft = ?, draft_problem = NULL,
+           edited_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?`,
+      )
+      .run(draft, proposalId);
+    return Number(res.changes) === 1;
+  });
+  if (!saved) return false;
   logProposalActivity(db, proposalId, 'Dane', 'draft-edited', (name) => `You edited the draft for ${name}.`);
   return true;
 }
 
 /** Save Dane's answer to one of a proposal's questions. False when there is no such question. */
 export function answerQuestion(db: DatabaseSync, proposalId: number, questionId: number, answer: string | null): boolean {
-  const res = db
-    .prepare(
-      `UPDATE proposal_question SET answer = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       WHERE id = ? AND proposal_id = ?`,
-    )
-    .run(answer, questionId, proposalId);
-  if (Number(res.changes) !== 1) return false;
+  const saved = changeWithVersion(db, proposalId, 'answer', 'Dane', () => {
+    const res = db
+      .prepare(
+        `UPDATE proposal_question SET answer = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ? AND proposal_id = ?`,
+      )
+      .run(answer, questionId, proposalId);
+    return Number(res.changes) === 1;
+  });
+  if (!saved) return false;
   logProposalActivity(db, proposalId, 'Dane', 'answer-saved', (name) =>
     answer === null ? `You cleared an answer on the proposal for ${name}.` : `You answered a screening question on the proposal for ${name}.`,
   );
@@ -362,9 +377,13 @@ export function answerQuestion(db: DatabaseSync, proposalId: number, questionId:
 
 /** Add a screening question by hand. False when there is no such proposal or it already has the most. */
 export function addQuestion(db: DatabaseSync, proposalId: number, question: string): boolean {
-  const p = getProposal(db, proposalId);
-  if (!p || p.questions.length >= MAX_QUESTIONS) return false;
-  db.prepare('INSERT INTO proposal_question (proposal_id, question) VALUES (?, ?)').run(proposalId, question);
+  const added = changeWithVersion(db, proposalId, 'question', 'Dane', () => {
+    const p = getProposal(db, proposalId);
+    if (!p || p.questions.length >= MAX_QUESTIONS) return false;
+    db.prepare('INSERT INTO proposal_question (proposal_id, question) VALUES (?, ?)').run(proposalId, question);
+    return true;
+  });
+  if (!added) return false;
   logProposalActivity(db, proposalId, 'Dane', 'question-added', (name) => `You added a screening question to the proposal for ${name}.`);
   return true;
 }
