@@ -147,10 +147,15 @@ export function findJobByUrl(db: DatabaseSync, url: string): SavedJob | undefine
   return row ? toJob(row) : undefined;
 }
 
-/** Save a job. A second job with the same link is refused, and nothing changes. */
+/**
+ * Save a job. A second job with the same link is refused, and nothing changes.
+ * `log: false` leaves out the "You saved" activity line, for a save Dane did
+ * not make (the made-up demo data writes its own line as the app).
+ */
 export function saveJob(
   db: DatabaseSync,
   job: NewJob,
+  opts: { log?: boolean } = {},
 ): { ok: true; id: number } | { ok: false; error: 'duplicate'; existingId: number } {
   const existing = findJobByUrl(db, job.url);
   if (existing) return { ok: false, error: 'duplicate', existingId: existing.id };
@@ -162,7 +167,7 @@ export function saveJob(
       )
       .run(job.url, job.title, job.description, job.budget, job.jobType, job.postedAt, job.client, job.connectsCost);
     const id = Number(result.lastInsertRowid);
-    logJobActivity(db, id, 'Dane', 'job-saved', (name) => `You saved the job ${name}.`);
+    if (opts.log !== false) logJobActivity(db, id, 'Dane', 'job-saved', (name) => `You saved the job ${name}.`);
     return { ok: true, id };
   } catch (err) {
     // Two saves of the same link at once: the table's UNIQUE rule is the last word.

@@ -109,12 +109,12 @@ export function readPortfolioForm(
   return { ok: true, entry: { project, status: status as EvidenceStatus, features, links, approvedForUse } };
 }
 
-/** Add an entry and return its id. */
-export function addEntry(db: DatabaseSync, entry: NewEntry): number {
+/** Add an entry and return its id. `log: false` leaves out the "You added" line (the demo data's own add). */
+export function addEntry(db: DatabaseSync, entry: NewEntry, opts: { log?: boolean } = {}): number {
   const result = db
     .prepare('INSERT INTO portfolio_evidence (project, status, features, links, approved_for_use) VALUES (?, ?, ?, ?, ?)')
     .run(entry.project, entry.status, entry.features, JSON.stringify(entry.links), entry.approvedForUse ? 1 : 0);
-  logActivity(db, { actor: 'Dane', kind: 'portfolio-added', summary: `You added ${quotedName(entry.project)} to your portfolio.` });
+  if (opts.log !== false) logActivity(db, { actor: 'Dane', kind: 'portfolio-added', summary: `You added ${quotedName(entry.project)} to your portfolio.` });
   return Number(result.lastInsertRowid);
 }
 

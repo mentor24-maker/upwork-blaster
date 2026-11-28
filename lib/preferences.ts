@@ -133,11 +133,14 @@ export function weightsTotal(weights: Weights): number {
   return WEIGHT_KEYS.reduce((sum, k) => sum + weights[k], 0);
 }
 
-/** Save the settings as a new version and return its number. Old versions are never changed. */
-export function savePreferences(db: DatabaseSync, settings: Settings): number {
+/**
+ * Save the settings as a new version and return its number. Old versions are
+ * never changed. `log: false` leaves out the "You saved" line (the demo data's own save).
+ */
+export function savePreferences(db: DatabaseSync, settings: Settings, opts: { log?: boolean } = {}): number {
   const result = db.prepare('INSERT INTO preferences (settings) VALUES (?)').run(JSON.stringify(settings));
   const version = Number(result.lastInsertRowid);
-  logActivity(db, { actor: 'Dane', kind: 'preferences-saved', summary: `You saved your preferences (version ${version}).` });
+  if (opts.log !== false) logActivity(db, { actor: 'Dane', kind: 'preferences-saved', summary: `You saved your preferences (version ${version}).` });
   return version;
 }
 
